@@ -434,6 +434,15 @@ int dbBusyCallback(void *ptr, int count)    //  Database connection,      Number
    if( zErrMsg ){ sqlite3_free(zErrMsg); }
 }*/
 
+void createAllBetsIndex()
+{
+   //-- 2016.10.27 add index for speed
+   string sql = "create index idxOpcDone on AllBets(opcode, done);";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
+   sql = "create index idxBetType on AllBets(bet_type);";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
+   sql = "create index idxGenBet on AllBets(gen_bet);";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
+   sql = "create index idxTx on AllBets(tx);";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
+   sql = "create index idxBettor on AllBets(bettor);";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
+}
 void buildLuckChainDb()
 {
    string sql = "Create TABLE AllBets([id] integer PRIMARY KEY AUTOINCREMENT"
@@ -467,11 +476,14 @@ void buildLuckChainDb()
 					",[refereeNick] varchar"
 					",[hide] int DEFAULT 0"
 					",[encrypt] int DEFAULT 0"
+					",[encashTx] varchar(64)"
                      ");";
    char* pe = 0;
    int rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, &pe);
    if( fDebug ){ printf("buildLuckChainDb :: AllBets :: [%s] \n [%d] [%s]\n", sql.c_str(), rc, pe); }
    if( pe ){ sqlite3_free(pe);    pe=0; }
+   createAllBetsIndex();   //-- 2016.10.27 add index for speed
+   
 
 
    sql = "Create TABLE Addresss([id] integer PRIMARY KEY AUTOINCREMENT"
@@ -559,12 +571,12 @@ void buildLuckChainDb()
    if( fDebug ){ printf("buildLuckChainDb :: total :: [%s] \n [%d] [%s]\n", sql.c_str(), rc, pe); }
 }
 
-bool isTableExists(const string sTab)
+bool isTableExists(const string sTab, sqlite3 *oneDb)
 {
    bool rzt = false;
    string sql = "select count(*)  from sqlite_master where type='table' and name like '%" + sTab + "%';";
    char* pe = 0;      int64_t icnt = 0;
-   int rc = sqlite3_exec(dbLuckChainRead, sql.c_str(), selectCountCallback, (void*)&icnt, &pe);
+   int rc = sqlite3_exec(oneDb, sql.c_str(), selectCountCallback, (void*)&icnt, &pe);
    rzt = icnt  > 0;
    if( fDebug ){ printf("isTableExists:: [%s] \n [%d] [%s]\n", sql.c_str(), rc, pe); }
    if( pe ){ sqlite3_free(pe); }
@@ -578,9 +590,11 @@ int openSqliteDb()
    rc = sqlite3_threadsafe();
 #ifdef WIN32
    string sLuckChainDb = GetDataDir().string() + "\\luckchain.db",  sAllAddressDb = GetDataDir().string() + "\\alladdress.db";
+   std::replace( sLuckChainDb.begin(), sLuckChainDb.end(), '\\', '\x2f'); // replace all '\' to '/'
 #else
    string sLuckChainDb = GetDataDir().string() + "/luckchain.db",  sAllAddressDb = GetDataDir().string() + "/alladdress.db";
 #endif
+
     filesystem::path pathLuckChainDb = sLuckChainDb;      string sLuckChainDbInAppDir = "luckchain.db";   	const char* pLuckChainDb = sLuckChainDb.c_str();
     if( !filesystem::exists(pathLuckChainDb) )
 	{
@@ -593,18 +607,9 @@ int openSqliteDb()
 
 //if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=[%d]  \n", rc, pLuckChainDb, bAllBetsExist); }
    /* Open database */
-   rc = sqlite3_open(sAllAddressDb.c_str(), &dbAllAddress);  //World.db3  alladdress.db
-   rc = sqlite3_open(pLuckChainDb, &dbBitBet);
-   rc = sqlite3_open(pLuckChainDb, &dbLuckChainRead);
-   rc = sqlite3_open(pLuckChainDb, &dbLuckChainRead2);
-   rc = sqlite3_open(pLuckChainDb, &dbLuckChainWrite);     rc = sqlite3_open(pLuckChainDb, &dbLuckChainGu2);
-   rc = sqlite3_open(pLuckChainDb, &dbLuckChainGui);   //sqlite3_exec(dbLuckChainGui, "PRAGMA synchronous = OFF; ", 0,0,0);
-   sqlite3_busy_handler(dbLuckChainRead, dbBusyCallback, (void *)dbLuckChainRead);
-   sqlite3_busy_handler(dbLuckChainRead2, dbBusyCallback, (void *)dbLuckChainRead2);
-   sqlite3_busy_handler(dbLuckChainWrite, dbBusyCallback, (void *)dbLuckChainWrite);
-   sqlite3_busy_handler(dbLuckChainGui, dbBusyCallback, (void *)dbLuckChainGui);   sqlite3_busy_handler(dbLuckChainGu2, dbBusyCallback, (void *)dbLuckChainGu2);
+   rc = sqlite3_open(pLuckChainDb, &dbLuckChainWrite);
 
-	bool bAllBetsExist = isTableExists("AllBets");
+	bool bAllBetsExist = isTableExists("AllBets", dbLuckChainWrite);
 	if( !bAllBetsExist )
 	{
 		buildLuckChainDb();
@@ -613,7 +618,7 @@ if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=
 
    string sql = "SELECT * from Settings;";
    dbOneResultCallbackPack pack = {OneResultPack_STR_TYPE, 1, 0, 0, "db_ver", ""};
-   getOneResultFromDb(dbLuckChainRead, sql, pack);
+   getOneResultFromDb(dbLuckChainWrite, sql, pack);
    float f = atof( pack.sRzt.c_str() ), f2 = 1.101200, f3 = 1.102200;
    //if( fDebug ){ printf("db_ver [%f :: %f], [%s] \n", f, f2, pack.sRzt.c_str()); }
    if( f < f2 )
@@ -630,6 +635,28 @@ if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=
 		sql = "update AllBets set encrypt=0;";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
 		sql = "update Settings set db_ver='1.1022';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
    }
+
+   f3 = 1.102700;   // 2016.10.27 add
+   if( f < f3 )
+   {
+		if( fDebug ){ printf("db_ver[%f] < 1.1027, upgrade \n", f); }
+		sql = "alter table AllBets add encashTx varchar(64);";               sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+		sql = "update AllBets set encashTx='-';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+		sql = "update Settings set db_ver='1.1027';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+		createAllBetsIndex();   //-- 2016.10.27 add index for speed
+		//sqlite3_close(dbLuckChainWrite);   sqlite3_open(pLuckChainDb, &dbLuckChainWrite);
+   }
+
+   rc = sqlite3_open(sAllAddressDb.c_str(), &dbAllAddress);  //World.db3  alladdress.db
+   rc = sqlite3_open(pLuckChainDb, &dbBitBet);
+   rc = sqlite3_open(pLuckChainDb, &dbLuckChainRead);
+   rc = sqlite3_open(pLuckChainDb, &dbLuckChainRead2);
+   rc = sqlite3_open(pLuckChainDb, &dbLuckChainGu2);
+   rc = sqlite3_open(pLuckChainDb, &dbLuckChainGui);   //sqlite3_exec(dbLuckChainGui, "PRAGMA synchronous = OFF; ", 0,0,0);
+   sqlite3_busy_handler(dbLuckChainRead, dbBusyCallback, (void *)dbLuckChainRead);
+   sqlite3_busy_handler(dbLuckChainRead2, dbBusyCallback, (void *)dbLuckChainRead2);
+   sqlite3_busy_handler(dbLuckChainWrite, dbBusyCallback, (void *)dbLuckChainWrite);
+   sqlite3_busy_handler(dbLuckChainGui, dbBusyCallback, (void *)dbLuckChainGui);   sqlite3_busy_handler(dbLuckChainGu2, dbBusyCallback, (void *)dbLuckChainGu2);
 
    // Create SQL statement
    /* sql = "SELECT Count(*) from Addresss where id < 10";  //"SELECT * from Keys";
@@ -1575,7 +1602,7 @@ bool disconnectBitBet(const CTransaction& tx)
 		if( sGenBet.length() > 50 ){
 			if( bbp.betType > 0 )  // not lucky 16
 			{
-				bbp = {0, iOpCode, bbp.betType, 0, 0, 0, 0, 0, 0, 0, "", "", "", sGenBet, "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 1, 0};      NotifyReceiveNewBitBetMsg(bbp);
+				bbp = {0, iOpCode, bbp.betType, 0, 0, 0, 0, 0, 0, 0, "", "", sGenBet, "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 1, 0};      NotifyReceiveNewBitBetMsg(bbp);
 			}
 		}
 #endif
@@ -1591,9 +1618,13 @@ struct syncLuckyBossPack
    std::vector<std::string> vSqls;
 };
 
-void dbLuckChainWriteSqlBegin(bool bStart)
+void dbLuckChainWriteSqlBegin(int bStart)
 {
-	if( bStart ){ sqlite3_exec( dbLuckChainWrite, "BEGIN", 0, 0, 0); }
+	if( bStart  > 0 )
+	{
+		if( bStart == 2 ){ sqlite3_exec( dbLuckChainWrite, "ROLLBACK", 0, 0, 0); }
+		else{  sqlite3_exec( dbLuckChainWrite, "BEGIN", 0, 0, 0);  }
+	}
 	else{ sqlite3_exec( dbLuckChainWrite, "COMMIT", 0, 0, 0); }
 }
 bool syncAllBitBets(uint64_t nHeight)
@@ -1607,7 +1638,7 @@ bool syncAllBitBets(uint64_t nHeight)
    int rc = sqlite3_exec(dbLuckChainRead, sql.c_str(), synAllBitBetCallback, (void*)&abbp, NULL);
    char* pe=0;      //rzt = abbp.u6RecordCount;
 
-dbLuckChainWriteSqlBegin( true );
+dbLuckChainWriteSqlBegin( 1 );
    int isz = abbp.vNeedExpBets.size();
    if( isz > 0 )
    {
@@ -1628,22 +1659,22 @@ dbLuckChainWriteSqlBegin( true );
 			slbp.vSqls.resize(0);
 		}
    }
-dbLuckChainWriteSqlBegin( false );
+dbLuckChainWriteSqlBegin( 0 );
 
-dbLuckChainWriteSqlBegin( true );
+dbLuckChainWriteSqlBegin( 1 );
    for (unsigned int nStr = 0; nStr < abbp.vSqls.size(); nStr++) { 
 		  string sq3 = abbp.vSqls[nStr];   pe = NULL;   // if (vstr[nStr] == "change=1")
 	      int r = sqlite3_exec(dbLuckChainWrite, sq3.c_str(), 0, 0, &pe);
 		  if( fDebug ){ printf("synAllBitBetCallback:: rc = [%d] [%s], sq3 = [%s]\n", r, pe, sq3.c_str()); }
 		  if( pe != NULL ){ sqlite3_free(pe); }
    }
-dbLuckChainWriteSqlBegin( false );
+dbLuckChainWriteSqlBegin( 0 );
    abbp.vSqls.resize(0);
 
    isz = abbp.vNeedExpBets.size();  // Total Lucky Boss Winners
    if( isz > 0 )
    {
-dbLuckChainWriteSqlBegin( true );
+dbLuckChainWriteSqlBegin( 1 );
 		for (unsigned int nStr = 0; nStr < isz; nStr++) {
 			string sLuckyBossGenBet = abbp.vNeedExpBets[ nStr ];
 			//if( iBetType == 3 )	// Lucky Boss, Biggest
@@ -1657,7 +1688,7 @@ dbLuckChainWriteSqlBegin( true );
 				if( fDebug ){ printf("synAllBitBetCallback for set NeedExpBets Winner :: rw = [%d], sq21 = [%s]\n", rw, sq21.c_str()); }
 			}
 		}
-dbLuckChainWriteSqlBegin( false );
+dbLuckChainWriteSqlBegin( 0 );
 		abbp.vNeedExpBets.resize(0);
    }
 
@@ -2503,6 +2534,7 @@ bool isValidBitBetEncashTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack &
 							int rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
 //sqlite3_exec( dbLuckChainWrite, "COMMIT", 0, 0, 0);
 							if( fDebug ) printf("isValidBitBetEncashTx : set done=1, sql=[%s] rc =[%d] \n", sql.c_str(), rc);
+							sql = "UPDATE AllBets set encashTx='"  + tx.GetHash().ToString() + "' where tx='" + bbp.genBet + "';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), 0, 0, 0);
 						}
 					}
 				}else if( fDebug ){ printf( "isValidBitBetEncashTx: u6Deeps [%s] < [%d] \n", u64tostr(u6Deeps).c_str(), BitBet_Standard_Confirms); }

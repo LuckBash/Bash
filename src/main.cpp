@@ -1925,8 +1925,8 @@ bool CBlock::SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew)
     uint64_t u6Time2 = 0;   if( fDebug ){ u6Time2 = GetTimeMillis() - u6Time; }
 	if( fDebug ){ printf("SetBestChain() : syncAllBitBets() used time = [%s] \n", u64tostr(u6Time2).c_str()); }
     if( fDebug ){ u6Time = GetTimeMillis(); }
-int vtxSz = vtx.size();      bool bRejTx = false,  bSqlBoostMode = vtxSz >= 20;
-if( bSqlBoostMode ){ dbLuckChainWriteSqlBegin( true ); }   // 2016.10.14 add
+int vtxSz = vtx.size();      bool bRejTx = false;  //bSqlBoostMode = vtxSz >= 20;
+dbLuckChainWriteSqlBegin( 1 );    // 2016.10.14 add
     BOOST_FOREACH(const CTransaction& tx, vtx)
 	{			
 		bRejTx = isRejectTransaction(tx, u6Hei);
@@ -1935,10 +1935,13 @@ if( bSqlBoostMode ){ dbLuckChainWriteSqlBegin( true ); }   // 2016.10.14 add
 			break; 
 		}
 	}
-if( bSqlBoostMode ){ dbLuckChainWriteSqlBegin( false ); }  // 2016.10.14 add
     if( fDebug ){ u6Time2 = GetTimeMillis() - u6Time; }
 	if( fDebug ){ printf("SetBestChain() : vtx.size() = [%d], isRejectTransaction() used time = [%s] \n", vtxSz, u64tostr(u6Time2).c_str()); }
-		if( bRejTx ){ return DoS(10, error("SetBestChain() : block includes not under rule's tx, ban.")); }
+	if( bRejTx ){
+		dbLuckChainWriteSqlBegin( 2 );   // ROLLBACK   2016.11.10 add
+		return DoS(1, error("SetBestChain() : block includes not under rule's tx, rollback, ban."));
+	}
+dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
 #ifdef QT_GUI
 	notifyReceiveNewBlockMsg( u6Hei );  // 2016.10.19 add
 #endif

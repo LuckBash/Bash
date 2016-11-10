@@ -217,7 +217,7 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern unsigned int getBitBetTotalBetsAndMore(const string genBet, dbBitBetTotalAmountAndWinnerPack& pack);
 	extern unsigned int getWinnersReward(sqlite3 *dbOne, int betType, const string sReferee, uint64_t u6AllRewardCoins, uint64_t u6AllWinnerBetCoins, const std::vector<txOutPairPack > allWinners, std::vector<txOutPairPack >& newWinners, uint64_t& u6ToMinerFee);
 	extern uint64_t bettorCanEvaluateReferee(sqlite3 *dbOne, const string sReferee, const string sBettor);
-	extern void dbLuckChainWriteSqlBegin(bool bStart);
+	extern void dbLuckChainWriteSqlBegin(int bStart);
 	extern bool disconnectBitBet(const CTransaction& tx);
 
 

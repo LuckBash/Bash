@@ -4025,7 +4025,11 @@ void StartNode(void* parg)
         printf("Error; NewThread(ThreadDumpAddress) failed\n");
 
     // Mine proof-of-stake blocks in the background
+#ifdef QT_GUI
     if (!GetBoolArg("-staking", true))
+#else
+    if (!GetBoolArg("-staking", false))
+#endif
         printf("Staking disabled\n");
     else
         if (!NewThread(ThreadStakeMiner, pwalletMain))
