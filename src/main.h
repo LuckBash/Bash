@@ -57,12 +57,7 @@ static const unsigned int MAX_ORPHAN_TRANSACTIONS = MAX_BLOCK_SIZE/100;
 static const unsigned int MAX_ORPHAN_TRANSACTIONS_OLD = MAX_BLOCK_SIZE_OLD/100;
 /** The maximum number of entries in an 'inv' protocol message */
 static const unsigned int MAX_INV_SZ = 50000;
-/** Fees smaller than this (in satoshi) are considered zero fee (for transaction creation) */
-//static const int64_t MIN_TX_FEE = 10000;
-static const int64_t MIN_TX_FEE = 10 * COIN;
-/** Fees smaller than this (in satoshi) are considered zero fee (for relaying) */
-static const int64_t MIN_RELAY_TX_FEE = MIN_TX_FEE;
-static const int64_t MIN_TXOUT_AMOUNT = MIN_TX_FEE;
+
 /** No amount larger than this (in satoshi) is valid */
 static const int64_t MAX_MONEY = 50000000000 * COIN;
 inline bool MoneyRange(int64_t nValue) { return (nValue >= 0 && nValue <= MAX_MONEY); }
@@ -93,6 +88,23 @@ inline unsigned int max_ORPHAN_TRANSACTIONS(int64_t nHeight) {
     if( nHeight >= NewTxFee_RewardCoinYear_Active_Height ){ return MAX_ORPHAN_TRANSACTIONS; }
 	else return MAX_ORPHAN_TRANSACTIONS_OLD;
 }
+
+/** Fees smaller than this (in satoshi) are considered zero fee (for transaction creation) */
+//static const int64_t MIN_TX_FEE = 10000;
+/** Fees smaller than this (in satoshi) are considered zero fee (for relaying) */
+//static const int64_t MIN_RELAY_TX_FEE = MIN_TX_FEE;
+//static const int64_t MIN_TXOUT_AMOUNT = MIN_TX_FEE;
+extern const int64_t f20161111_NewTxFee_Active_Height;  // 2016.11.11 add
+extern const int64_t MIN_TX_FEE_old;
+extern const int64_t New_MIN_TX_FEE;
+
+inline uint64_t getMIN_TX_FEE(int64_t nHeight) { 
+    if( nHeight >= f20161111_NewTxFee_Active_Height ){ return New_MIN_TX_FEE; }
+	else return MIN_TX_FEE_old;
+}
+inline uint64_t getMIN_RELAY_TX_FEE(int64_t nHeight) {  return getMIN_TX_FEE(nHeight);  }
+inline uint64_t getMIN_TXOUT_AMOUNT(int64_t nHeight) {  return getMIN_TX_FEE(nHeight);  }
+
 
 extern int bitnet_pack_block(CBlock* block, string& sRzt);
 extern bool getCBlockByFilePos(const CAutoFile& filein, unsigned int nBlockPos, CBlock* block);

@@ -49,12 +49,12 @@ struct BitBetPack
    uint64_t u6MiniBetAmount;
    uint64_t u6StartBlock;
    uint64_t u6TargetBlock, u6BetCount;
-   int betLen, betStartNum;
+   int betLen, betStartNum, maxBetCount, oneAddrOnce;
    string betNum;
    string bettor;
    string genBet;
    string referee;
-   string betTitle, refereeNick, ex2, ex3;
+   string betTitle, refereeNick, encryptFlag5, ex3;
    
    string betNum2;
    string tx;
@@ -148,6 +148,12 @@ struct dbBitBetTotalAmountAndWinnerPack{
 #define AllBet_refereeNick_idx 28
 #define AllBet_hide_idx 29
 #define AllBet_encrypt_idx 30
+#define AllBet_encashTx_idx 31
+#define AllBet_rounds_idx 32
+#define AllBet_new_bet_count_idx 33
+#define AllBet_max_bet_count_idx 34
+#define AllBet_one_addr_once_idx 35
+#define AllBet_est_bet_count_idx 36
 
 extern bool bBitBetSystemWallet;
 const string system_address_1 = "BEqYrTpNeT7hSgcB8JZT3bY6BkimbnEa3Q";
@@ -157,7 +163,7 @@ extern const string strBitNetLotteryMagic;
 extern const int iBitNetBlockMargin3;
 extern const int BitNetBeginAndEndBlockMargin_Mini_30;
 extern const int BitNetBeginAndEndBlockMargin_Max_4320;
-extern const int64_t MIN_Lottery_Create_Amount;
+extern int64_t MIN_Lottery_Create_Amount;
 extern const string BitBetBurnAddress;
 extern const std::string BitBet_Magic;
 extern int dwBitNetLotteryStartBlock;
@@ -190,7 +196,7 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern std::string signMessageAndRztNotInclude(const string strAddress, const string strMessage, const string sAnti);
 	extern std::string getLucky16MultiBetNums(int iStart, int iCount);
 	extern uint64_t getAliveLaunchBetCount( sqlite3 *dbOne, std::string sBettor );
-	extern void notifyReceiveNewBlockMsg(uint64_t nHeight);
+	extern void notifyReceiveNewBlockMsg(uint64_t nHeight, uint64_t nTime);
 	extern bool isDuplicatesBossNums( const string sBetNum );
 
     extern sqlite3 *dbBitBet;
@@ -209,7 +215,7 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern void createGenBetTable(const string newTab);
 	extern bool insertBitBetToAllBetsDB(const BitBetPack& bbp, const string genTx="AllBets");
 	//extern void insertABitBetToGenBetDB(const string genTx, const BitBetPack& bbp);
-	extern bool syncAllBitBets(uint64_t nHeight);
+	extern bool syncAllBitBets(uint64_t nHeight, bool vForce=false);
 	extern int getMultiGenBetCountForGui(const string s, uint64_t &rzt);
 	extern int getRunSqlResultCountForGui(const string sql, uint64_t &rzt);
 	extern int getRunSqlResultCountForGu2(const string sql, uint64_t &rzt);
@@ -219,6 +225,8 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern uint64_t bettorCanEvaluateReferee(sqlite3 *dbOne, const string sReferee, const string sBettor);
 	extern void dbLuckChainWriteSqlBegin(int bStart);
 	extern bool disconnectBitBet(const CTransaction& tx);
+    extern uint64_t getRefereeMaxCoins(sqlite3 *db, const string sReferee);
+	extern string getRefereeNickName(sqlite3 *db, const string sReferee);
 
 
 inline std::string u64tostr(uint64_t n)

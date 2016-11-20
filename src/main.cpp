@@ -71,9 +71,12 @@ CScript COINBASE_FLAGS;
 
 const string strMessageMagic = "LuckChain Signed Message:\n";
 extern int dw_zip_block;  // 2015.12.30 add
+const int64_t MIN_TX_FEE_old = 10 * COIN;
+const int64_t New_MIN_TX_FEE = 1 * COIN;
+const int64_t f20161111_NewTxFee_Active_Height = 70000;  // 2016.11.11 add
 
 // Settings
-int64_t nTransactionFee = MIN_TX_FEE;
+int64_t nTransactionFee = New_MIN_TX_FEE;
 int64_t nReserveBalance = 0;
 int64_t nMinimumInputValue = 0;
 extern enum Checkpoints::CPMode CheckpointsMode;
@@ -587,7 +590,7 @@ bool CTransaction::CheckTransaction(bool bChkMiniValue) const
         // 2015.09.27 add, enforce minimum output amount
         if( (!fBitBetEncashTx) && bChkMiniValue && (nBestHeight >= NewTxFee_RewardCoinYear_Active_Height) && (!IsCoinBase()) )
         {
-            if ((!txout.IsEmpty()) && txout.nValue < MIN_TXOUT_AMOUNT)
+            if ((!txout.IsEmpty()) && txout.nValue < getMIN_TXOUT_AMOUNT(nBestHeight))
                 return DoS(100, error("CTransaction::CheckTransaction() : txout.nValue below minimum"));
         }
         if (txout.nValue < 0)
@@ -626,7 +629,7 @@ bool CTransaction::CheckTransaction(bool bChkMiniValue) const
 int64_t CTransaction::GetMinFee(unsigned int nBlockSize, enum GetMinFee_mode mode, unsigned int nBytes) const
 {
     // Base fee is either MIN_TX_FEE or MIN_RELAY_TX_FEE
-    int64_t nBaseFee = (mode == GMF_RELAY) ? MIN_RELAY_TX_FEE : MIN_TX_FEE;
+    int64_t nBaseFee = (mode == GMF_RELAY) ? getMIN_RELAY_TX_FEE(nBestHeight) : getMIN_TX_FEE(nBestHeight);
 	//if( nBestHeight < NewTxFee_RewardCoinYear_Active_Height ){ nBaseFee = 10000; }  // Old MIN_TX_FEE, 2015.09.15 add
 
     unsigned int nNewBlockSize = nBlockSize + nBytes;
@@ -741,7 +744,7 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CTransaction &tx,
         // Continuously rate-limit free transactions
         // This mitigates 'penny-flooding' -- sending thousands of free transactions just to
         // be annoying or make others' transactions take longer to confirm.
-        if (nFees < MIN_RELAY_TX_FEE)
+        if (nFees < getMIN_RELAY_TX_FEE(nBestHeight))
         {
             static CCriticalSection cs;
             static double dFreeCount;
@@ -1070,7 +1073,7 @@ const int YEARLY_BLOCKCOUNT = 525600;	// 365 * 1440
 // miner's coin stake reward based on coin age spent (coin-days)
 int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees)
 {
-    int64_t nSubsidy = MIN_TX_FEE;  // MIN_TX_FEE = 10 * COIN
+    int64_t nSubsidy = getMIN_TX_FEE(nBestHeight);  // MIN_TX_FEE = 10 * COIN
 	
     //int64_t nRewardCoinYear = 0.001 * COIN;	// 0.1%
     //if( nBestHeight >= NewTxFee_RewardCoinYear_Active_Height )  // 2015.09.07 add
@@ -1490,7 +1493,7 @@ bool CTransaction::ConnectInputs(CTxDB& txdb, MapPrevTx inputs, map<uint256, CTx
 				if( fDebug && (txPay.ReadFromDisk(dtp)) )
 				{
 					string sPayHash = txPay.GetHash().ToString();      uint64_t iPayTxHei = GetTransactionBlockHeight(sPayHash);
-					BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
+					BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
 					int bbpRzt = GetTxBitBetParam(txPay, bbp);
 					if( fDebug ){ printf("ConnectInputs() : bbpRzt=[%d :: %d], spent tx [%s], hei=[%s] \n[%s]\n", bbpRzt, bbp.opCode, sPayHash.c_str(), u64tostr(iPayTxHei).c_str(), txPay.chaindata.c_str()); }
 					if( (bbpRzt >= 14) && (bbp.opCode == 3) )
@@ -1785,8 +1788,13 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
         vConnect.push_back(pindex);
     reverse(vConnect.begin(), vConnect.end());
 
+    int vDisBlockSize = vDisconnect.size();
     printf("REORGANIZE: Disconnect %"PRIszu" blocks; %s..%s\n", vDisconnect.size(), pfork->GetBlockHash().ToString().substr(0,20).c_str(), pindexBest->GetBlockHash().ToString().substr(0,20).c_str());
     printf("REORGANIZE: Connect %"PRIszu" blocks; %s..%s\n", vConnect.size(), pfork->GetBlockHash().ToString().substr(0,20).c_str(), pindexNew->GetBlockHash().ToString().substr(0,20).c_str());
+
+    int iMaxReogBlocks = GetArg("-maxreorganizeblks", BitBet_Standard_Confirms);
+    if( (iMaxReogBlocks > 0) && (vDisBlockSize >= iMaxReogBlocks) )   //  = 10,  2016.11.19 add
+        return error("Reorganize() : Disconnect (%d >= %d) blocks, ban. ", vDisBlockSize, iMaxReogBlocks);
 
     // Disconnect shorter branch
     list<CTransaction> vResurrect;
@@ -1824,6 +1832,7 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
         // Queue memory transactions to delete
         u6Hei = pindex->nHeight;    // 2016.10.20 add
 		if( fDebug ){ printf("****** Reorganize() : [connect block] Height = [%s] ******\n", u64tostr(u6Hei).c_str()); }
+dbLuckChainWriteSqlBegin( 1 );    // 2016.11.11 add
         BOOST_FOREACH(const CTransaction& tx, block.vtx)
 		{
             vDelete.push_back(tx);
@@ -1838,8 +1847,14 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
     }
 	if( fDebug ){ printf("****** Reorganize() : [connect block] end, bRejTx = [%d] ******\n", bRejTx); }
     if( bRejTx ){   // 2016.10.20 11:17 add
-		return error("Reorganize() : [connect block] isRejectTransaction(%s :: %s) failed, ban.!!!", u64tostr(u6Hei).c_str(), sErrHash.c_str());
+		dbLuckChainWriteSqlBegin( 2 );   // ROLLBACK   2016.11.11 add
+		return error("Reorganize() : [connect block] isRejectTransaction(%s :: %s) failed, rollback, ban.!!!", u64tostr(u6Hei).c_str(), sErrHash.c_str());
 	}
+    if( u6Hei > 0 )   // 2016.11.11 add
+    {
+        dbLuckChainWriteSqlBegin( 0 );    // 2016.11.11 add
+        //syncAllBitBets( u6Hei, true );   // 2016.11.11 add
+    }
 
     if (!txdb.WriteHashBestChain(pindexNew->GetBlockHash()))
         return error("Reorganize() : WriteHashBestChain failed");
@@ -1931,7 +1946,7 @@ dbLuckChainWriteSqlBegin( 1 );    // 2016.10.14 add
 	{			
 		bRejTx = isRejectTransaction(tx, u6Hei);
 		if( bRejTx ){
-			EraseFromWallets( tx.GetHash() );   mempool.remove(tx);     //mempool.removeConflicts(tx);
+			mempool.remove(tx);      //EraseFromWallets( tx.GetHash() );       //mempool.removeConflicts(tx);
 			break; 
 		}
 	}
@@ -1939,11 +1954,11 @@ dbLuckChainWriteSqlBegin( 1 );    // 2016.10.14 add
 	if( fDebug ){ printf("SetBestChain() : vtx.size() = [%d], isRejectTransaction() used time = [%s] \n", vtxSz, u64tostr(u6Time2).c_str()); }
 	if( bRejTx ){
 		dbLuckChainWriteSqlBegin( 2 );   // ROLLBACK   2016.11.10 add
-		return DoS(1, error("SetBestChain() : block includes not under rule's tx, rollback, ban."));
+		return error("SetBestChain() : block includes not under rule's tx, rollback, ban.");   //return DoS(1, error("SetBestChain() : block includes not under rule's tx, rollback, ban."));
 	}
 dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
 #ifdef QT_GUI
-	notifyReceiveNewBlockMsg( u6Hei );  // 2016.10.19 add
+	notifyReceiveNewBlockMsg( u6Hei, (uint64_t) nTime );  // 2016.10.19 add
 #endif
 
         if (!SetBestChainInner(txdb, pindexNew))
@@ -1995,6 +2010,8 @@ dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
             if (!block.SetBestChainInner(txdb, pindex))
                 break;
         }
+
+       uint64_t u6Hei = pindexNew->nHeight;      syncAllBitBets( u6Hei, true );   // 2016.11.12 add
     }
 
     // Update best block in wallet (so we can detect restored wallets)

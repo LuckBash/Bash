@@ -8,11 +8,19 @@ CONFIG += thread
 CONFIG += exceptions
 CONFIG  -= exceptions_off
 
+USE_BITNET=0
+USE_MYSQL=0
+USE_QRCODE=1
+USE_UPNP=1
+USE_TXMSG=1
+USE_WEBKIT=1
+USE_SQLITE=1
+USE_QT5=0
+
 greaterThan(QT_MAJOR_VERSION, 4) {
-    QT += widgets
+    QT += widgets multimedia
     DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0
 }
-
 
 # for boost 1.37, add -mt to the boost libraries
 # use: qmake BOOST_LIB_SUFFIX=-mt
@@ -67,6 +75,11 @@ contains(USE_QRCODE, 1) {
 contains(USE_BITNET, 1) {
     message(Building with BITNET support)
     DEFINES += USE_BITNET
+}
+
+contains(USE_QT5, 1) {
+    message(Building with USE_QT5 support)
+    DEFINES += USE_QT5
 }
 
 # use: qmake "USE_TXMSG=1"
@@ -221,7 +234,6 @@ HEADERS += src/qt/bitcoingui.h \
     src/lzma/LzmaEnc.h \
     src/lzma/LzmaLib.h \
     src/lzma/Precomp.h \
-    src/aes/Rijndael.h \
     src/aes/aes.h \
     #src/aes/aeshelper.h \
     src/mruset.h \
@@ -316,7 +328,6 @@ SOURCES += src/qt/bitcoin.cpp src/qt/bitcoingui.cpp \
     src/lzma/LzmaDec.c \
     src/lzma/LzmaEnc.c \
     src/lzma/LzmaLib.c \
-    src/aes/Rijndael.cpp \
     src/aes/aes.cpp \
     src/blockchain-compression-algorithm.cpp \
     src/checkpoints.cpp \
@@ -435,16 +446,19 @@ SOURCES += src/bitnet.cpp
 
 HEADERS += src/MemoryModule.h
 SOURCES += src/MemoryModule.cpp
+
+win32:{
+HEADERS += src/qt/qwinwidget.h
+SOURCES += src/qt/qwinwidget.cpp
+}
 }
 
 contains(USE_WEBKIT, 1) {
-HEADERS += src/qt/webPage.h
-SOURCES += src/qt/webPage.cpp
+    HEADERS += src/qt/webPage.h src/qt/cookiejar.h src/qt/autosaver.h
+    SOURCES += src/qt/webPage.cpp src/qt/cookiejar.cpp src/qt/autosaver.cpp
 win32:{
 HEADERS += src/qt/qmfcapp.h
 SOURCES += src/qt/qmfcapp.cpp
-HEADERS += src/qt/qwinwidget.h
-SOURCES += src/qt/qwinwidget.cpp
 }
 }
 

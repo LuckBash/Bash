@@ -134,6 +134,8 @@ OBJS= \
     obj/lzma/LzmaLib.o \
     obj/lzma/Threads.o \
     obj/blockchain-compression-algorithm.o \
+    obj/bitbet.o \
+    obj/sqlite3/sqlite3.o \
     obj/zerocoin/ZeroTest.o
 
 all: luckchaind.exe
@@ -159,6 +161,9 @@ obj/lz4/%.o: lz4/%.c
 	g++ -c $(CFLAGS) -o $@ $<
 
 obj/lzma/%.o: lzma/%.c
+	g++ -c $(CFLAGS) -o $@ $<
+
+obj/sqlite3/%.o: sqlite3/%.c
 	g++ -c $(CFLAGS) -o $@ $<
 
 obj/scrypt-x86.o: scrypt-x86.S

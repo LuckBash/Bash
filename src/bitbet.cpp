@@ -43,8 +43,8 @@ const int BitNetBeginAndEndBlockMargin_Mini_30 = 10;
 const int BitNetBeginAndEndBlockMargin_Max_4320 = 4320;
 int dwBitNetLotteryStartBlock = 320;
 int BitNetLotteryStartTestBlock_286000 = 123;
-int64_t BitNet_Lottery_Create_Mini_Amount = MIN_TXOUT_AMOUNT;
-const int64_t MIN_Lottery_Create_Amount = MIN_TXOUT_AMOUNT;
+int64_t BitNet_Lottery_Create_Mini_Amount = 10 * COIN;   //MIN_TXOUT_AMOUNT;
+int64_t MIN_Lottery_Create_Amount = 10 * COIN;   //MIN_TXOUT_AMOUNT;
 bool bBitBetSystemWallet = false;
 
 extern bool verifyMessage(const string strAddress, const string strSign, const string strMessage);
@@ -58,7 +58,7 @@ int GetTxBitBetParam(const CTransaction& tx, BitBetPack &bbp);
 int deleteBitBetTx(const string tx);
 static int synLuckyBossCallback(void *data, int argc, char **argv, char **azColName);
 
-boost::signals2::signal<void (uint64_t nBlockNum)> NotifyReceiveNewBlockMsg;
+boost::signals2::signal<void (uint64_t nBlockNum, uint64_t nTime)> NotifyReceiveNewBlockMsg;
 boost::signals2::signal<void (const BitBetPack& bbp)> NotifyReceiveNewBitBetMsg;
 boost::signals2::signal<void (int opc, const std::string nickName, const std::string coinAddr, const std::string sFee, const std::string maxBetCoin)> NotifyaddLuckChainRefereeMsg5Param;
 
@@ -477,6 +477,11 @@ void buildLuckChainDb()
 					",[hide] int DEFAULT 0"
 					",[encrypt] int DEFAULT 0"
 					",[encashTx] varchar(64)"
+					",[rounds] bigint DEFAULT 0"
+					",[new_bet_count] bigint DEFAULT 0"
+					",[max_bet_count] integer DEFAULT 0"
+					",[one_addr_once] int DEFAULT 0"
+					",[est_bet_count] int DEFAULT 0"
                      ");";
    char* pe = 0;
    int rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, &pe);
@@ -544,7 +549,7 @@ void buildLuckChainDb()
 			",[db_ver] varchar);";
    rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
 //sql = "insert Settings set Address_for_referee='BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx', db_ver='1.1012';";
-   sql = "INSERT INTO Settings (Address_for_referee, db_ver) VALUES ('BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx', '1.1022');"; 
+   sql = "INSERT INTO Settings (Address_for_referee, db_ver) VALUES ('BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx', '1.1112');"; 
    pe = 0;      rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, &pe);
    if( fDebug ){ printf("buildLuckChainDb :: Settings :: [%s] \n [%d] [%s]\n", sql.c_str(), rc, pe); }
 
@@ -575,11 +580,11 @@ bool isTableExists(const string sTab, sqlite3 *oneDb)
 {
    bool rzt = false;
    string sql = "select count(*)  from sqlite_master where type='table' and name like '%" + sTab + "%';";
-   char* pe = 0;      int64_t icnt = 0;
-   int rc = sqlite3_exec(oneDb, sql.c_str(), selectCountCallback, (void*)&icnt, &pe);
+   int64_t icnt = 0;   //char* pe = 0;
+   int rc = sqlite3_exec(oneDb, sql.c_str(), selectCountCallback, (void*)&icnt, NULL);
    rzt = icnt  > 0;
-   if( fDebug ){ printf("isTableExists:: [%s] \n [%d] [%s]\n", sql.c_str(), rc, pe); }
-   if( pe ){ sqlite3_free(pe); }
+   if( fDebug ){ printf("isTableExists:: rzt=[%d], rc=[%d], [%s] \n", rzt, rc, sql.c_str()); }
+   //if( pe ){ sqlite3_free(pe); }
    return rzt;
 }
 
@@ -587,7 +592,7 @@ int openSqliteDb()
 {
    int  rc;
    //char *sql;
-   rc = sqlite3_threadsafe();
+   int rcSafe = sqlite3_threadsafe();
 #ifdef WIN32
    string sLuckChainDb = GetDataDir().string() + "\\luckchain.db",  sAllAddressDb = GetDataDir().string() + "\\alladdress.db";
    std::replace( sLuckChainDb.begin(), sLuckChainDb.end(), '\\', '\x2f'); // replace all '\' to '/'
@@ -605,7 +610,7 @@ int openSqliteDb()
 		else{ pLuckChainDb = sLuckChainDbInAppDir.c_str(); }
 	}
 
-//if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=[%d]  \n", rc, pLuckChainDb, bAllBetsExist); }
+//if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=[%d]  \n", rcSafe, pLuckChainDb, bAllBetsExist); }
    /* Open database */
    rc = sqlite3_open(pLuckChainDb, &dbLuckChainWrite);
 
@@ -614,7 +619,7 @@ int openSqliteDb()
 	{
 		buildLuckChainDb();
 	}
-if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=[%d]  \n", rc, pLuckChainDb, bAllBetsExist); }
+if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=[%d]  \n", rcSafe, pLuckChainDb, bAllBetsExist); }
 
    string sql = "SELECT * from Settings;";
    dbOneResultCallbackPack pack = {OneResultPack_STR_TYPE, 1, 0, 0, "db_ver", ""};
@@ -646,6 +651,17 @@ if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=
 		createAllBetsIndex();   //-- 2016.10.27 add index for speed
 		//sqlite3_close(dbLuckChainWrite);   sqlite3_open(pLuckChainDb, &dbLuckChainWrite);
    }
+   
+   f3 = 1.111200;   // 2016.11.12 add
+   if( f < f3 )
+   {
+		if( fDebug ){ printf("db_ver[%f] < 1.1112, upgrade \n", f); }
+		sql = "alter table AllBets add max_bet_count integer DEFAULT (0); alter table AllBets add one_addr_once int DEFAULT (0); alter table AllBets add est_bet_count int DEFAULT (0);";               sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+		sql = "update AllBets set max_bet_count=0, one_addr_once=0;";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+		sql = "update Settings set db_ver='1.1112';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+   }
+   sql = "update AllBets set est_bet_count=bet_count where done=0 and max_bet_count>1 and opcode=1 and (bet_type != 4);";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);   // 2016.11.12 end
+   sql = "update AllBets set est_bet_count=new_bet_count where done=0 and max_bet_count>1 and opcode=1 and (bet_type = 4);";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);   // 2016.11.12 end
 
    rc = sqlite3_open(sAllAddressDb.c_str(), &dbAllAddress);  //World.db3  alladdress.db
    rc = sqlite3_open(pLuckChainDb, &dbBitBet);
@@ -1018,8 +1034,9 @@ bool insertBitBetToAllBetsDB(const BitBetPack& bbp, const string genBet)
 // tx _12, bet_title _13, referee _14, bettor _15, bet_start_num _16, confirmed _17, maxbetcoins _18, nTime _19, win_num _20, isWinner _21, bet_count _22,
 // total_bet_amount _23, refereeDecideTx _24, tblockHash _25, done _26, payIndex _27
    bool rzt=false;
-   string sql = "INSERT INTO " + genBet + " (opcode, bet_type, bet_amount, min_amount, sblock, blockspace, tblock, bet_len, bet_num, bet_num2, gen_bet, tx, bet_title,"
-                      "referee, bettor, bet_start_num, confirmed, maxbetcoins, nTime, win_num, isWinner, bet_count, total_bet_amount, refereeDecideTx, tblockHash, done, payIndex, refereeNick, hide, encrypt) ";
+   string sql = "INSERT INTO " + genBet + " (opcode, bet_type, bet_amount, min_amount, sblock, blockspace, tblock, bet_len, bet_num, bet_num2, gen_bet, tx, bet_title, "
+                      "referee, bettor, bet_start_num, confirmed, maxbetcoins, nTime, win_num, isWinner, bet_count, total_bet_amount, refereeDecideTx, tblockHash, done, payIndex, "
+					  "refereeNick, hide, encrypt, max_bet_count, one_addr_once, est_bet_count, rounds, new_bet_count) ";
    if( fDebug ){ printf("insertBitBetToAllBetsDB:: [%s]\n [%s][%s]\n", sql.c_str(), bbp.tx.c_str(), bbp.betTitle.c_str()); }
    //printf("miniBetAmount[%" PRIu64 "]\n", bbp.u6MiniBetAmount);
    //printf("startBlock[%" PRIu64 "]\n", bbp.u6StartBlock);
@@ -1038,12 +1055,12 @@ bool insertBitBetToAllBetsDB(const BitBetPack& bbp, const string genBet)
    string bet_title=bbp.betTitle;     if( bet_title.length() < 1 ){ bet_title="-"; }
    string referee=bbp.referee;       if( referee.length() < 1 ){ referee="-"; }
    string refereeNick = bbp.refereeNick;      if( refereeNick.length() < 1 ){ refereeNick="-"; }
-   string sEncrypt = "0";      if( (bbp.betType == 5) && (bbp.ex2 == "1") ){ sEncrypt="1"; }   //int iEncrypt = 0;    if( bbp.betType == 5 ){  iEncrypt = atoi(bbp.ex2);  }
+   string sEncrypt = "0";      if( (bbp.betType == 5) && (bbp.encryptFlag5 == "1") ){ sEncrypt="1"; }   //int iEncrypt = 0;    if( bbp.betType == 5 ){  iEncrypt = atoi(bbp.encryptFlag5);  }
 
    string t = inttostr(bbp.opCode) + ", " + inttostr(bbp.betType) + ", " + u64tostr(bbp.u6BetAmount) + ", " + u64tostr(bbp.u6MiniBetAmount) + ", " + u64tostr(bbp.u6StartBlock) + ", " + u64tostr(bbp.u6BlockSpace) + ", " + u64tostr(bbp.u6TargetBlock) +
                   ", " + inttostr(bbp.betLen) + ", '" + bet_num + "', 0, '" + gen_bet + "', '" + bbp.tx + "', '" + bet_title + "', '" + referee + "', '" + 
 				  bbp.bettor + "', " + inttostr(bbp.betStartNum) + ", " + inttostr(bbp.confirmed) + ", " + u64tostr(bbp.u6MaxBetCoins) + ", " + u64tostr(bbp.u6Time) + ", '-', 0, " + 
-				  u64tostr(bbp.u6BetCount) + ", " + u64tostr(bbp.u6TotalBetAmount) + ", '-', '-', 0, " + inttostr(bbp.payIndex) + ", '" + refereeNick + "', 0, " + sEncrypt;
+				  u64tostr(bbp.u6BetCount) + ", " + u64tostr(bbp.u6TotalBetAmount) + ", '-', '-', 0, " + inttostr(bbp.payIndex) + ", '" + refereeNick + "', 0, " + sEncrypt + ", " + inttostr(bbp.maxBetCount) + ", " + inttostr(bbp.oneAddrOnce) + ", 1, 0, 1";
    if( fDebug ){ printf("insertBitBetToAllBetsDB:: t[%s] \n", t.c_str()); }
    //printf("betAmount [%" PRIu64 ", %" PRIu64 " ]\n", bbp.u6BetAmount, bbp.u6MiniBetAmount);
 
@@ -1059,7 +1076,7 @@ bool insertBitBetToAllBetsDB(const BitBetPack& bbp, const string genBet)
    
    if( (rc==SQLITE_OK) && (bbp.opCode == 2) && (bbp.betType>0) && (bbp.genBet.length() > 60) )  // bet, not lucky 16, genbet valid, up bet_count total_bet_amount
    {
-		sql = "UPDATE AllBets set bet_count=(bet_count+1), total_bet_amount=(total_bet_amount + " + u64tostr(bbp.u6BetAmount) + ") where tx='" + bbp.genBet + "' and opcode=1 and done=0;";
+		sql = "UPDATE AllBets set bet_count=(bet_count+1), new_bet_count=(new_bet_count+1), est_bet_count=(bet_count+1), total_bet_amount=(total_bet_amount + " + u64tostr(bbp.u6BetAmount) + ") where tx='" + bbp.genBet + "' and opcode=1 and done=0;";
 		rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, 0);
 		rzt = (rc == SQLITE_OK);
 		if( fDebug ){ printf("insertBitBetToAllBetsDB : up gen bet bet_count and total_amount :: rzt = [%d], sql = [%s] \n", rzt, sql.c_str()); }
@@ -1101,11 +1118,13 @@ bool insertBitBetToAllBetsDB(const BitBetPack& bbp, const string genBet)
 
 struct synAllBitBetPack
 {
-   int iStep;
+   int iStep;      bool bForce;
    uint64_t u6CurBlockNum;
    uint64_t u6RecordCount;
-   std::vector<std::string> vSqls;   std::vector<std::string> vNeedExpBets;    std::vector<std::string> vReBetLuckyLottos;
+   std::vector<std::string> vSqls;    std::vector<std::string> vReBetLuckyLottos;   //std::vector<std::string> vNeedExpBets;
+   std::vector<std::pair<std::string, std::string> > vNeedExpBets;
 };
+
 
 string getStrLastNChar(const string sHash, int nByte)
 {
@@ -1321,18 +1340,18 @@ static int synAllBitBetCallback(void *data, int argc, char **argv, char **azColN
 	  string sTx = argv[AllBets_tx_idx],  sBanker = argv[AllBet_refereeNick_idx];  // tx index = 12
 	  int64_t u6TxBlockNum = GetTransactionBlockHeight(sTx);      bool isBankerMode = (sBanker == "1");     //int isWiner = atoi( argv[AllBets_isWinner_idx] );
 	  int bid = atoi(argv[0]), iconfirmed = atoi( argv[AllBets_confirmed_idx] ),   iBetType=atoi(argv[AllBets_bet_type_idx]);;  // confirmed index = 17
-	  if( fDebug ){ printf("synAllBitBetCallback:: id = [%d], confirmed [%d], sBanker=[%s : %d], tx [%s], u6TxBlockNum=[%s]  \n", bid, iconfirmed, sBanker.c_str(), isBankerMode, sTx.c_str(), u64tostr(u6TxBlockNum).c_str()); }
+	  if( fDebug ){ printf("\nsynAllBitBetCallback:: id = [%d], confirmed [%d], sBanker=[%s : %d], tx [%s], u6TxBlockNum=[%s]  \n", bid, iconfirmed, sBanker.c_str(), isBankerMode, sTx.c_str(), u64tostr(u6TxBlockNum).c_str()); }
 	  if( u6TxBlockNum > 0 )  // tx exists, is a valid tx
 	  {
 		  uint64_t u6Confirmed = 0, u6StartBlock = strToInt64(argv[AllBets_sblock_idx]), u6BlockSpace = strToInt64(argv[AllBets_blockspace_idx]);
-		  uint64_t u6TargetBlockInDb = strToInt64(argv[AllBets_tblock_idx]),  u6BetNum2 = strToInt64( argv[AllBets_bet_num2_idx] );
+		  uint64_t u6TargetBlockInDb = strToInt64(argv[AllBets_tblock_idx]),  u6BetNum2 = strToInt64( argv[AllBets_bet_num2_idx] ), u6Rounds = strToInt64( argv[AllBet_rounds_idx] );
 		  int iOpcode=atoi(argv[AllBets_opcode_idx]),     iBetLen=atoi(argv[AllBets_bet_len_idx]);
 		  //if( u6TxBlockNum != u6StartBlock )
           {
 	      uint64_t u6RealTargetBlockNum = u6TargetBlockInDb;
 		  if( iOpcode == 1 )  // Launch Bet
 		  {
-				if( (iBetType == 4) && (u6BetNum2 > 0) ){   }  // 2016.10.07 add, no winner Lucky Lotto,  u6RealTargetBlockNum = u6TargetBlockInDb
+				if( (iBetType == 4) && (u6Rounds > 0) ){   }  // 2016.10.07 add, no winner Lucky Lotto,  u6RealTargetBlockNum = u6TargetBlockInDb
 				else{	 u6RealTargetBlockNum = u6TxBlockNum + u6BlockSpace;  }
 		  }
 		  string sql = "UPDATE AllBets set sblock=" + u64tostr(u6TxBlockNum);
@@ -1341,9 +1360,9 @@ static int synAllBitBetCallback(void *data, int argc, char **argv, char **azColN
 			 u6Confirmed = p->u6CurBlockNum - u6TxBlockNum + 1;
 			 sql = sql + ", confirmed=" + u64tostr(u6Confirmed);
 		  }
-if( fDebug ){ printf("synAllBitBetCallback:: u6CurBlockNum = [%s], real target block Num[%s], Tx in block [%s], Confirmed = [%s], u6BetNum2=[%s] \n", u64tostr(p->u6CurBlockNum).c_str(),  u64tostr(u6RealTargetBlockNum).c_str(), u64tostr(u6TxBlockNum).c_str(), u64tostr(u6Confirmed).c_str(), u64tostr(u6BetNum2).c_str()); }
+if( fDebug ){ printf("synAllBitBetCallback:: u6CurBlockNum = [%s], real target block Num[%s], Tx in block [%s], Confirmed = [%s], u6BetNum2=[%s], u6Rounds[%s] \n", u64tostr(p->u6CurBlockNum).c_str(),  u64tostr(u6RealTargetBlockNum).c_str(), u64tostr(u6TxBlockNum).c_str(), u64tostr(u6Confirmed).c_str(), u64tostr(u6BetNum2).c_str(), u64tostr(u6Rounds).c_str()); }
 
-		  if( (iOpcode == 1) && (iBetType != 5) && (p->u6CurBlockNum > u6RealTargetBlockNum) )
+		  if( (!p->bForce)  && (iOpcode == 1) && (iBetType != 5) && (p->u6CurBlockNum > u6RealTargetBlockNum) )
 		  {
 				uint64_t u6TgBlkConfirmed = p->u6CurBlockNum - u6RealTargetBlockNum;
 if( fDebug ){ printf("synAllBitBetCallback :: u6TgBlkConfirmed(%s) :: BitBet_MAX_Confirms(%d), opcode=1 and iBetType=[%d], tx=[%s] \n", u64tostr(u6TgBlkConfirmed).c_str(), BitBet_MAX_Confirms, iBetType, sTx.c_str()); }
@@ -1392,9 +1411,12 @@ if( fDebug ){ printf("synAllBitBetCallback :: Lucky Lotto [%s] no winner, set ba
 						if( isWinnerBitBet(sTx) == false )   // no winner
 						{
 							//set new target block,  bet_num2 at here is not win flag
+							uint64_t u6FstTgBlkNum = u6TxBlockNum + u6BlockSpace;      uint64_t u6FstTgBlkDeep = p->u6CurBlockNum - u6FstTgBlkNum;
+							uint64_t u6NextRound = (u6FstTgBlkDeep / (u6BlockSpace + 22)) + 1;     uint64_t u6NewTgBlkNum = u6NextRound * (u6BlockSpace + 22) + u6FstTgBlkNum;
 							uint64_t u6NewTgBlk = p->u6CurBlockNum + u6BlockSpace + 1;
-if( fDebug ){ printf("synAllBitBetCallback :: Lucky Lotto no winner, set new target block = [%s], tx=[%s] can rebet \n", u64tostr(u6NewTgBlk).c_str(), sTx.c_str()); }
-							sql = "UPDATE AllBets set win_num='-', tblockHash='-', tblock=" + u64tostr(u6NewTgBlk) + ", bet_num2=bet_num2+1  where gen_bet='" + sTx + "';";
+if( fDebug ){ printf("synAllBitBetCallback :: Lucky Lotto no winner, set new target block = [%s : %s (u6NewTgBlkNum)] (u6CurBlockNum[%s] + %s + 1), tx=[%s] can rebet \n", u64tostr(u6NewTgBlk).c_str(), u64tostr(u6NewTgBlkNum).c_str(), u64tostr(p->u6CurBlockNum).c_str(), u64tostr(u6BlockSpace).c_str(), sTx.c_str()); }
+//if( fDebug ){ printf("synAllBitBetCallback :: Lucky Lotto no winner, u6CurBlockNum=[%s], u6FstTgBlkNum=[%s], u6Rounds = [%s : %s (u6NextRound)]  \n", u64tostr(p->u6CurBlockNum).c_str(), u64tostr(u6FstTgBlkNum).c_str(), u64tostr(u6Rounds).c_str(), u64tostr(u6NextRound).c_str()); }
+							sql = "UPDATE AllBets set win_num='-', tblockHash='-', tblock=" + u64tostr(u6NewTgBlkNum) + ", rounds=" + u64tostr(u6NextRound) + ", est_bet_count=0, new_bet_count=0 where gen_bet='" + sTx + "';";
 #ifdef QT_GUI
 							p->vReBetLuckyLottos.push_back(sTx);
 #endif
@@ -1435,7 +1457,7 @@ if( fDebug ){ printf("synAllBitBetCallback :: no winner, set tx=[%s] done=1 \n",
 			  if( iBetType < 5 )  // Bet Real Event's result not from block hash;
               {
 				  string sWinNum = "-", sIsWiner="0";   //(iOpcode == 1) &&
-				  if( sTgBlkHashInDb != sCurrTgBlkHash )
+				  if( (p->bForce) || (sTgBlkHashInDb != sCurrTgBlkHash) )
 				  {
 					  if( (iBetType == 0) || (iBetType == 1)  || (iBetType == 2)  || (iBetType == 4) )  // Lucky 16  and Lucky Lottery direct compare bet number
 					  {
@@ -1449,7 +1471,7 @@ if( fDebug ){ printf("synAllBitBetCallback :: no winner, set tx=[%s] done=1 \n",
 						  }
 						  else{
 							if( iBetType == 4 )	{   // bet_num2 at here is not win flag
-								if( (u6BetNum2 == 0) && (sWinNum == sBetNum) ){ sIsWiner = "1"; }
+								if( (u6Rounds == 0) && (sWinNum == sBetNum) ){ sIsWiner = "1"; }
 							}
 							else if( sWinNum == sBetNum ){ sIsWiner = "1"; }
 						  }
@@ -1470,7 +1492,7 @@ if( fDebug ){ printf("synAllBitBetCallback :: no winner, set tx=[%s] done=1 \n",
 					{
 						if( iBetType == 3 )	// Lucky Boss, Biggest, we need explain all bet nums at first
 						{
-							p->vNeedExpBets.push_back(sTx);
+							p->vNeedExpBets.push_back( make_pair(sTx, sCurrTgBlkHash) );
 						}
 					}
 					//if( p->u6CurBlockNum == (u6RealTargetBlockNum+1) )
@@ -1489,7 +1511,7 @@ if( fDebug ){ printf("synAllBitBetCallback :: no winner, set tx=[%s] done=1 \n",
 						if( iBetType > 0 )  // 1, 2, 4
 						{
 							string sq2="";
-							if( iBetType == 4 ){ sq2 = "UPDATE AllBets set isWinner=1 where bet_num2<1 and bet_num='" + sWinNum + "' and gen_bet='" + sTx + "';"; }
+							if( iBetType == 4 ){ sq2 = "UPDATE AllBets set isWinner=1 where rounds<1 and bet_num='" + sWinNum + "' and gen_bet='" + sTx + "';"; }
 							else{ sq2 = "UPDATE AllBets set isWinner=1 where bet_num='" + sWinNum + "' and bet_num!='-' and gen_bet='" + sTx + "';"; }
 							p->vSqls.push_back(sq2);     //return 0;
 						}
@@ -1524,7 +1546,7 @@ if( fDebug ){ printf("synAllBitBetCallback :: no winner, set tx=[%s] done=1 \n",
 			  }
 			 }
 		  }
-		  if( (iOpcode == 1) && (p->u6CurBlockNum == (u6RealTargetBlockNum + BitBet_Standard_Confirms - 1)) )
+		  if( (iOpcode == 1) && ( p->bForce || (p->u6CurBlockNum == (u6RealTargetBlockNum + BitBet_Standard_Confirms - 1))) )
 		  {
 				string sq110 = "UPDATE AllBets set confirmed=(" + u64tostr(p->u6CurBlockNum) + " - sblock + 1) where gen_bet='" + sTx + "';";
 				p->vSqls.push_back( sq110 ); 
@@ -1537,13 +1559,13 @@ if( fDebug ){ printf("synAllBitBetCallback :: no winner, set tx=[%s] done=1 \n",
 		  if( pe != NULL ){ sqlite3_free(pe); } */
 		  }
 	  }
-	  else if( iconfirmed > 0 ){  // 2016.10.19 add,   forked ?  delete all of this bet
+	  /*else if( iconfirmed > 0 ){  // 2016.10.19 add,   forked ?  delete all of this bet
 			if( sTx.length() > 50 )
 			{
 				string sq1019 = "DELETE FROM AllBets where gen_bet='" + sTx + "';";
 				p->vSqls.push_back( sq1019 ); 
 			}
-	  }
+	  }*/
    }
    return 0;
 }
@@ -1566,7 +1588,7 @@ bool disconnectBitBet(const CTransaction& tx)
    //if( fDebug ){ printf("disconnectBitBet(%s), fDone = [%d], opcode = [%d]  \n", sTx.c_str(), pack.fDone, iOpCode); }
    if( pack.fDone > 0 )
    {
-		BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
+		BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
 		int bbpRzt = GetTxBitBetParam(tx, bbp);
 		if( fDebug ){ printf("disconnectBitBet(),  opcode = [%d], bbpRzt=[%d], betType=[%d], sql=[%s] \n", iOpCode, bbpRzt, bbp.betType, sql.c_str()); }  // bet_type
 		rzt = true;      string sGenBet = "";
@@ -1587,13 +1609,24 @@ bool disconnectBitBet(const CTransaction& tx)
 				if( fDebug ){ printf("disconnectBitBet(), opcode=2, u6BetAmount = [%s],  gen_bet = [%s], sql = [%s] \n", u64tostr(u6BetAmount).c_str(), sGenBet.c_str(), sql.c_str()); }
 				if( sGenBet.length() > 50 )
 				{
-					sql = "UPDATE AllBets set bet_count=(bet_count - 1), total_bet_amount=(total_bet_amount - " + u64tostr(u6BetAmount) + ") where tx='" + sGenBet + "' and opcode=1;";
+					sql = "UPDATE AllBets set bet_count=(bet_count - 1), new_bet_count=(new_bet_count-1), est_bet_count=(bet_count - 1), total_bet_amount=(total_bet_amount - " + u64tostr(u6BetAmount) + ") where tx='" + sGenBet + "' and opcode=1;";
 					int rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
 					if( fDebug ){ printf("disconnectBitBet(), opcode=2, update gen_bet(%s) = [%d], sql = [%s] \n", sGenBet.c_str(), rc, sql.c_str()); }
 					sql = "DELETE FROM AllBets where tx='" + sTx + "';";
 				}
 			}
-		}else{  sql = "";  }
+		}
+		else if( iOpCode == 3 )   // Encash, 2016.11.12 add
+		{
+			if( bbpRzt > 15 )  // isBitBetEncashTx()
+			{
+				sGenBet = bbp.genBet;
+				sql = "UPDATE AllBets set done=0, encashTx='-' where tx='" + sGenBet + "' and opcode=1;";
+				if( fDebug ){ printf("disconnectBitBet(), opcode=3, [%s]  \n", sql.c_str()); }
+			}
+		}
+		else{  sql = "";  }
+
 		if( sql.length() > 10 ){
 			int rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
 			if( fDebug ){ printf("disconnectBitBet(), sql.length() > 10 = [%s], rc = [%d] \n", sql.c_str(), rc); }
@@ -1602,7 +1635,7 @@ bool disconnectBitBet(const CTransaction& tx)
 		if( sGenBet.length() > 50 ){
 			if( bbp.betType > 0 )  // not lucky 16
 			{
-				bbp = {0, iOpCode, bbp.betType, 0, 0, 0, 0, 0, 0, 0, "", "", sGenBet, "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 1, 0};      NotifyReceiveNewBitBetMsg(bbp);
+				bbp = {0, iOpCode, bbp.betType, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", sGenBet, "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 1, 0};      NotifyReceiveNewBitBetMsg(bbp);
 			}
 		}
 #endif
@@ -1612,7 +1645,7 @@ bool disconnectBitBet(const CTransaction& tx)
 
 struct syncLuckyBossPack
 {
-   uint64_t u6CurBlockNum;
+   //uint64_t u6CurBlockNum;
    uint64_t u6RecordCount;
    string sCurrTgBlkHash;
    std::vector<std::string> vSqls;
@@ -1627,14 +1660,14 @@ void dbLuckChainWriteSqlBegin(int bStart)
 	}
 	else{ sqlite3_exec( dbLuckChainWrite, "COMMIT", 0, 0, 0); }
 }
-bool syncAllBitBets(uint64_t nHeight)
+bool syncAllBitBets(uint64_t nHeight, bool vForce)
 {
     uint64_t u6Time = 0;   if( fDebug ){ u6Time = GetTimeMillis(); }
    bool rzt = false;
    //string sql = "SELECT * from AllBets where done=0 and confirmed<" + inttostr(BitBetBeginEndBlockSpace_10) + ";";
    string sql = "SELECT * from AllBets where opcode=1 and done=0; ";
    synAllBitBetPack abbp;  // = {1, nBestHeight, 0};
-   abbp.iStep = 1;   abbp.u6CurBlockNum = nBestHeight;   abbp.u6RecordCount = 0;   abbp.vSqls.clear();    abbp.vNeedExpBets.clear();   abbp.vReBetLuckyLottos.clear();
+   abbp.iStep = 1;    abbp.bForce = vForce;   abbp.u6CurBlockNum = nHeight;   abbp.u6RecordCount = 0;   abbp.vSqls.clear();    abbp.vNeedExpBets.clear();   abbp.vReBetLuckyLottos.clear();
    int rc = sqlite3_exec(dbLuckChainRead, sql.c_str(), synAllBitBetCallback, (void*)&abbp, NULL);
    char* pe=0;      //rzt = abbp.u6RecordCount;
 
@@ -1643,11 +1676,11 @@ dbLuckChainWriteSqlBegin( 1 );
    if( isz > 0 )
    {
 		if( fDebug ){ printf("synAllBitBetCallback NeedExpBets count = [%d] > 0 \n", isz); }
-		for (unsigned int nStr = 0; nStr < isz; nStr++) {
-			string sLuckyBossGenBet = abbp.vNeedExpBets[ nStr ];
+		BOOST_FOREACH(const PAIRTYPE(std::string, std::string)& item, abbp.vNeedExpBets){   //for (unsigned int nStr = 0; nStr < isz; nStr++) {
+			string sLuckyBossGenBet = item.first;    //abbp.vNeedExpBets[ nStr ];
 			sql = "SELECT * from AllBets where bet_type=3 and done=0 and gen_bet='" + sLuckyBossGenBet + "';";
-			syncLuckyBossPack slbp;     slbp.u6CurBlockNum = nBestHeight;      slbp.u6RecordCount = 0;   slbp.vSqls.clear();
-			slbp.sCurrTgBlkHash = GetBlockHashStr(slbp.u6CurBlockNum);
+			syncLuckyBossPack slbp;      slbp.u6RecordCount = 0;   slbp.vSqls.clear();     //slbp.u6CurBlockNum = nBestHeight;
+			slbp.sCurrTgBlkHash = item.second;    //GetBlockHashStr(slbp.u6CurBlockNum);
 			int rc3 = sqlite3_exec(dbLuckChainWrite, sql.c_str(), synLuckyBossCallback, (void*)&slbp, NULL);
 			
 			for (unsigned int ie = 0; ie < slbp.vSqls.size(); ie++) { 
@@ -1675,8 +1708,8 @@ dbLuckChainWriteSqlBegin( 0 );
    if( isz > 0 )
    {
 dbLuckChainWriteSqlBegin( 1 );
-		for (unsigned int nStr = 0; nStr < isz; nStr++) {
-			string sLuckyBossGenBet = abbp.vNeedExpBets[ nStr ];
+		BOOST_FOREACH(const PAIRTYPE(std::string, std::string)& item, abbp.vNeedExpBets){   //for (unsigned int nStr = 0; nStr < isz; nStr++) {
+			string sLuckyBossGenBet = item.first;    //abbp.vNeedExpBets[ nStr ];
 			//if( iBetType == 3 )	// Lucky Boss, Biggest
 			{
 				//uint64_t u6Num = strToInt64( argv[AllBets_bet_num2_idx] );
@@ -1696,7 +1729,7 @@ dbLuckChainWriteSqlBegin( 0 );
    isz = abbp.vReBetLuckyLottos.size();   // 2016.10.06 add, sync rebet lucky lotto to gui
    if( isz > 0 )
    {
-		BitBetPack bbp = {0, 4, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};      NotifyReceiveNewBitBetMsg(bbp);   //for(i=0; i++; i<isz)
+		BitBetPack bbp = {0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};      NotifyReceiveNewBitBetMsg(bbp);   //for(i=0; i++; i<isz)
    }
    abbp.vReBetLuckyLottos.resize(0);
 //    NotifyReceiveNewBlockMsg(nHeight);
@@ -1708,9 +1741,9 @@ dbLuckChainWriteSqlBegin( 0 );
     return rzt;
 }
 
-void notifyReceiveNewBlockMsg(uint64_t nHeight)
+void notifyReceiveNewBlockMsg(uint64_t nHeight, uint64_t nTime)
 {
-	NotifyReceiveNewBlockMsg(nHeight);
+	NotifyReceiveNewBlockMsg(nHeight, nTime);
 }
 
 static int synLuckyBossCallback(void *data, int argc, char **argv, char **azColName)
@@ -1781,7 +1814,7 @@ static int getBitBetTotalBetsAndMoreCallback(void *data, int argc, char **argv, 
 unsigned int getBitBetTotalBetsAndMore(sqlite3 *dbOne, const string genBet, dbBitBetTotalAmountAndWinnerPack& pack)
 {
 	unsigned int rzt=0;      char* pe=0;
-	string sql = "SELECT * from AllBets where gen_bet='" + genBet + "' and confirmed>=" + inttostr(BitBet_Standard_Confirms - 2) + ";";
+	string sql = "SELECT * from AllBets where gen_bet='" + genBet + "' and confirmed>=" + inttostr(BitBet_Standard_Confirms - 1) + ";";
 	int rc = sqlite3_exec(dbOne, sql.c_str(), getBitBetTotalBetsAndMoreCallback, (void*)&pack, &pe);
 	rzt = pack.u6RecordCount;
 	if( fDebug ){ printf("getBitBetTotalBetsAndMore:: rzt = [%d], rc = [%d] [%s], sql = [%s]\n", rzt, rc, pe, sql.c_str()); }
@@ -2008,6 +2041,12 @@ int GetTxBitBetCmdParamFromStr(const std::string betStr, BitBetCommand &bbc)
 	}
 	bbc.paramCount = rzt;    return rzt;
 }
+int unsigatoi(const char* s)
+{
+	int rzt = atoi(s);
+	if( rzt < 0 ){  rzt = 0;  }
+	return rzt;
+}
 int GetTxBitBetParamFromStr(const std::string betStr, BitBetPack &bbp)
 {
 	int rzt = 0;
@@ -2031,16 +2070,16 @@ int GetTxBitBetParamFromStr(const std::string betStr, BitBetPack &bbp)
 			i++;
 			//if( fDebug ){ printf("GetTxBitBetParamFromStr:: [%s] \n", pch); }
 			//if( i == 1 ){ bbp.betMagic = pch; }
-			if( i == 2 ){ bbp.id = atoi(pch); }
-			else if( i == 3 ){ bbp.opCode = atoi(pch); }	//  create = 1, bet = 2, cash = 3
-			else if( i == 4 ){ bbp.betType = atoi(pch); }
+			if( i == 2 ){ bbp.id = unsigatoi(pch); }
+			else if( i == 3 ){ bbp.opCode = unsigatoi(pch); }	//  create = 1, bet = 2, cash = 3
+			else if( i == 4 ){ bbp.betType = unsigatoi(pch); }
 			else if( i == 5 ){ bbp.u6BetAmount = strToInt64(pch); }  //dv = atof(pch);  bbp.betAmount = roundint64(dv * COIN); }
 			else if( i == 6 ){ bbp.u6MiniBetAmount = strToInt64(pch); }  //dv = atof(pch);  bbp.miniBetAmount = roundint64(dv * COIN); }
 			else if( i == 7 ){ bbp.u6StartBlock = strToInt64(pch); }  //dv =  atof(pch);  bbp.startBlock = roundint64(dv); }  //strToInt64(pch); }
 			else if( i == 8 ){ bbp.u6TargetBlock = strToInt64(pch); }
-			else if( i == 9 ){ bbp.betLen = atoi(pch); }  //printf("betLen [%s]\n", pch); }
-			else if( i == 10 ){ bbp.u6BetCount = atoi(pch); }
-			else if( i == 11 ){ bbp.betStartNum = atoi(pch); }
+			else if( i == 9 ){ bbp.betLen = unsigatoi(pch); }  //printf("betLen [%s]\n", pch); }
+			else if( i == 10 ){ bbp.u6BetCount = unsigatoi(pch); }
+			else if( i == 11 ){ bbp.betStartNum = unsigatoi(pch); }
 			else if( i == 12 ){ bbp.betNum = pch; }
 			else if( i == 13 ){ bbp.bettor = pch; }   // a9df6a65f6833d27ec3113079009e06b2fc8e5fd6e22a3d219ef15f39bac7b68
 			else if( i == 14 ){ bbp.genBet = pch;   if( bbp.genBet.length() < 60 ){ bbp.genBet.resize(0); }   }
@@ -2057,9 +2096,11 @@ int GetTxBitBetParamFromStr(const std::string betStr, BitBetPack &bbp)
 				bbp.refereeNick = pch;
 				if( bbp.refereeNick.length() > 34 ){ bbp.refereeNick.resize(34); }      // 2016.09.27 add, if bet type = 5, there is refereeNick
 			}
-			else if( i == 18 ){ bbp.ex2 = pch; }
-			else if( i == 19 ){ bbp.ex3 = pch; }
-			else if( i > 29 ){ break; }
+			else if( i == 18 ){ bbp.encryptFlag5 = pch; }               // 2016.11.12 change from bbp.ex2
+			else if( i == 19 ){  bbp.maxBetCount = unsigatoi(pch);  }   // 2016.11.12 add
+			else if( i == 20 ){  bbp.oneAddrOnce = unsigatoi(pch);  }   // 2016.11.12 add
+			else if( i == 21 ){ bbp.ex3 = pch; }
+			else if( i > 25 ){ break; }
 			//else if( i == 13 ){ sMakerAddr = pch; }
 			//else if( i == 14 ){ sLotteryLinkedTxid = pch; }
 			//else if( i == 15 ){ sSignMsg = pch; }
@@ -2108,7 +2149,8 @@ bool isValidBitBetGenesisTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack 
 		if( mustExist ){ return rzt; }
 		iTxHei = nBestHeight + 1;
 	}
-	if( fDebug ){ printf("isValidBitBetGenesisTx: isBankerMode=[%d], Tx [%s] Hei = [%s], nBestHeight [%s] \n", isBankerMode, bbp.tx.c_str(), u64tostr(iTxHei).c_str(), u64tostr(nBestHeight).c_str()); }
+	if( fDebug ){ printf("isValidBitBetGenesisTx: isBankerMode=[%d], Tx [%s] Hei = [%s], nBestHeight [%s], maxBetCount=[%d], oneAddrOnce=[%d] \n", isBankerMode, bbp.tx.c_str(), u64tostr(iTxHei).c_str(), u64tostr(nBestHeight).c_str(), bbp.maxBetCount, bbp.oneAddrOnce); }
+
 	//if( iTxHei < BitNetLotteryStartTestBlock_286000 ){ return rzt; }
 	if( bTxInBlock && (iTxHei >= New_Rules_161013_Active_Block) && (bbp.betType==0) ){ bbp.u6TargetBlock = 1; }   // 2016.10.13 add, Lucky 16 target block is next block
 
@@ -2209,6 +2251,26 @@ uint64_t getLuckyLottoTgBlkNum(const string sGenTx)
 	return rzt;
 }
 
+uint64_t getRefereeMaxCoins(sqlite3 *db, const string sReferee)
+{
+	uint64_t rzt = 0;
+	// get referee's maxcoins and all users bet coins
+	string sql = "select * from Referees where coinAddress='" + sReferee + "';";
+	dbOneResultCallbackPack pack = {OneResultPack_U64_TYPE, 5, 0, 0, "maxcoins", ""};  // 1 = uint64_t,  maxcoins id = 5
+	getOneResultFromDb(db, sql, pack);
+	if( pack.fDone == 0 ){  rzt = 1;  }
+	else rzt = pack.u6Rzt;   // = 0 mean no limit, else have limit bet amount
+	return rzt;
+}
+string getRefereeNickName(sqlite3 *db, const string sReferee)
+{
+	string rzt = "";
+	string sql = "select * from Referees where coinAddress='" + sReferee + "';";
+	dbOneResultCallbackPack pack = {OneResultPack_STR_TYPE, 1, 0, 0, "nickName", ""};  // 1 = uint64_t,  maxcoins id = 5
+	getOneResultFromDb(db, sql, pack);
+	if( pack.fDone > 0 ){  rzt = pack.sRzt;  }
+	return rzt;
+}
 /*uint64_t sumBitBetColumn(const string genBet, const string sColumn)
 {
 	uint64_t rzt = 0;
@@ -2223,7 +2285,7 @@ uint64_t sumBitBet_BetAmount(const string genBet)
 
 bool isValidBitBetBetTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack &bbp, int& payIdx)
 {
-   bool rzt = false;
+   bool rzt = false, bJustRcvTx = (iTxHei == 0);
    
 	if( bbp.tx.length() < 63){ bbp.tx = tx.GetHash().ToString(); }  // tx hash = 64 chars
 	if( iTxHei <= 0 ){ iTxHei = GetTransactionBlockHeight(bbp.tx); }
@@ -2232,7 +2294,7 @@ bool isValidBitBetBetTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack &bbp
 		if( fDebug ) printf("isValidBitBetBetTx: Tx [%s] Hei = 0, set to nBestHeight [%u] \n", bbp.tx.c_str(), nBestHeight);
 		iTxHei = nBestHeight + 1;
 	}
-	if( fDebug ){ printf("isValidBitBetBetTx: Tx [%s :: %s] Hei = [%"PRIu64"], nBestHeight [%u] \n", bbp.tx.c_str(), bbp.genBet.c_str(), iTxHei, nBestHeight); }
+	if( fDebug ){ printf("isValidBitBetBetTx: Tx [%s :: %s] Hei = [%s], nBestHeight [%s], bJustRcvTx=[%d] \n", bbp.tx.c_str(), bbp.genBet.c_str(), u64tostr(iTxHei).c_str(), u64tostr(nBestHeight).c_str(), bJustRcvTx); }
 	if( bbp.tx == bbp.genBet ){ return rzt; }
 	CBitcoinAddress aBettor(bbp.bettor);
     if( !aBettor.IsValid() ){ if( fDebug ){ printf("isValidBitBetBetTx: bettor [%s] unvalid \n", bbp.bettor.c_str());  return rzt;  } }
@@ -2250,22 +2312,25 @@ bool isValidBitBetBetTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack &bbp
    //if( !isBetTxExists(bbp.genBet) )
    if( GetTransactionByTxStr(bbp.genBet, genTx, genHashBlock) > 0 )
    {
-      BitBetPack genBbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
+      BitBetPack genBbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
       int bbpRzt = GetTxBitBetParam(genTx, genBbp);
 	  if( (bbpRzt < 15) || (genBbp.betType == 0) ){ return rzt; }   // betType == 0 == Lucky 16 / Slot Machine can't multi bet
 	  uint64_t genTxHei = getTxBlockHeightBy_hashBlock( genHashBlock );
-	  uint64_t genTBlockNum = genBbp.u6TargetBlock + genTxHei;
+	  uint64_t genTBlockNum = genBbp.u6TargetBlock + genTxHei, u6NewTgBlkNum = 0;
 	  if( fDebug ){ printf("isValidBitBetBetTx: betNum=[%s], genBbp.betLen[%d] genTxHei[%s] genTBlockNum=[%s] \n", bbp.betNum.c_str(), genBbp.betLen, u64tostr(genTxHei).c_str(), u64tostr(genTBlockNum).c_str());  }
 	  if( (iTxHei > genTBlockNum) && (genBbp.betType == 4) )   // 2016.10.09 add, support Lucky Lotto ReBet
 	  {
-		 genTBlockNum = getLuckyLottoTgBlkNum(bbp.genBet);
+		uint64_t u6BlockSpace = genBbp.u6TargetBlock,  u6FstTgBlkNum = genTBlockNum;      uint64_t u6FstTgBlkDeep = nBestHeight - u6FstTgBlkNum;
+		uint64_t u6NextRound = (u6FstTgBlkDeep / (u6BlockSpace + 22)) + 1;     u6NewTgBlkNum = u6NextRound * (u6BlockSpace + 22) + u6FstTgBlkNum;
+		genTBlockNum = getLuckyLottoTgBlkNum(bbp.genBet);
 	  }
 	  
 	  bool bOk = (iTxHei < genTBlockNum);   // && (bbp.u6TargetBlock == genTBlockNum);
-	  if( !bOk && fDebug ){ printf("isValidBitBetBetTx: error :: iTxHei=[%s] vs genTBlockNum=[%s] vs bbp.u6TargetBlock[%s] \n", u64tostr(iTxHei).c_str(), u64tostr(genTBlockNum).c_str(), u64tostr(bbp.u6TargetBlock).c_str()); }
+	  if( !bOk && fDebug ){ printf("isValidBitBetBetTx: error :: iTxHei=[%s] vs genTBlockNum=[%s : %s(u6NewTgBlkNum)] vs bbp.u6TargetBlock[%s] \n", u64tostr(iTxHei).c_str(), u64tostr(genTBlockNum).c_str(), u64tostr(u6NewTgBlkNum).c_str(), u64tostr(bbp.u6TargetBlock).c_str()); }
 	  if( !bOk && (bbp.betType == 4) )
 	  {
 		   if( iTxHei < New_Rules_161013_Active_Block ){ bOk = true; }
+		   //else if( iTxHei == 64319 ){  bOk = true;  }   // 2016.11.19, just for test
 	  }
 	  //if( (bbp.betType == genBbp.betType) && (bbp.betNum.length() >= genBbp.betLen) && (genTxHei > 0) && (iTxHei > genTxHei) && (iTxHei < genTBlockNum) && (bbp.opCode == 2) )
 	  if( (bbp.betType == genBbp.betType) && (bbp.betNum.length() >= genBbp.betLen) && (genTxHei > 0) && (iTxHei > genTxHei) && bOk && (bbp.opCode == 2) )
@@ -2275,32 +2340,92 @@ bool isValidBitBetBetTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack &bbp
 	     {
 	        if( bbp.u6BetAmount >= genBbp.u6MiniBetAmount )
 			{
+				bool isBankerMode = (bbp.refereeNick == "1") && (  (bbp.betType == 2) || (bbp.betType == 4)  );
+				bool bNewRuleActive = ( genTxHei >= f20161111_NewTxFee_Active_Height );
+				if( genBbp.maxBetCount > 0 )   // 2016.11.12 begin, limit bet count
+				{
+						uint64_t u6BetCount=0, u6MaxBetCount = genBbp.maxBetCount;      if(  u6MaxBetCount == 1 ){  u6MaxBetCount++;  }   // = 2
+						string sql =  "select Count(*) from AllBets where gen_bet='" + bbp.genBet + "'";
+						if( isBankerMode && (bbp.betType == 4) ){  sql = sql + " and rounds=0";  }
+						sql = sql + ";";
+						int rc = getRunSqlResultCount(dbLuckChainWrite, sql, u6BetCount);
+						if( fDebug ){  printf("isValidBitBetBetTx : genBbp.maxBetCount=[%d] : [%s](u6BetCount), rc=[%d] [%s] \n", genBbp.maxBetCount,  u64tostr(u6BetCount).c_str(), rc, sql.c_str());  }
+						if( (rc != SQLITE_OK) || ( (u6BetCount + 1) > u6MaxBetCount ) )
+						{
+							//bool bBan = ( genTxHei >= f20161111_NewTxFee_Active_Height );
+							if( fDebug ){  printf("isValidBitBetBetTx : rc(%d) != 0  Or u6BetCount(%s) > genBbp.maxBetCount(%d),  bNewRuleActive=[%d]  :( \n", rc, u64tostr(u6BetCount + 1).c_str(), genBbp.maxBetCount, bNewRuleActive);  }
+							if( bNewRuleActive ){  return rzt;  }
+						}
+				}
+				if( genBbp.oneAddrOnce > 0 )
+				{
+						uint64_t u6BetCount=0, u6OneAddrOnce = genBbp.oneAddrOnce;
+						string sql =  "select Count(*) from AllBets where gen_bet='" + bbp.genBet + "' and bettor='" + bbp.bettor + "'";
+						if( isBankerMode && (bbp.betType == 4) ){  sql = sql + " and rounds=0";  }
+						sql = sql + ";";
+						int rc = getRunSqlResultCount(dbLuckChainWrite, sql, u6BetCount);
+						if( fDebug ){  printf("isValidBitBetBetTx : genBbp.oneAddrOnce=[%d] : [%s](u6BetCount), rc=[%d] [%s] \n", genBbp.oneAddrOnce,  u64tostr(u6BetCount).c_str(), rc, sql.c_str());  }
+						if( (rc != SQLITE_OK) || ( (u6BetCount + 1) > u6OneAddrOnce ) )   //if( (u6BetCount + 1) > ((uint64_t)(genBbp.oneAddrOnce)) ){ return rzt; }
+						{
+							//bool bBan = ( genTxHei >= f20161111_NewTxFee_Active_Height );
+							if( fDebug ){  printf("isValidBitBetBetTx : rc(%d) != 0  Or u6BetCount(%s) > genBbp.oneAddrOnce(%d),  bNewRuleActive=[%d]  :( \n", rc, u64tostr(u6BetCount + 1).c_str(), genBbp.oneAddrOnce, bNewRuleActive);  }
+							if( bNewRuleActive ){  return rzt;  }
+						}
+				}   // 2016.11.12 end
+
 				if( bbp.betType == 5 )  // Bet RealEvents, we need limit total bet amount
 				{
-					// get referee's maxcoins and all users bet coins
+					/* get referee's maxcoins and all users bet coins
 					string sql = "select * from Referees where coinAddress='" + genBbp.referee + "';";
 					dbOneResultCallbackPack pack = {OneResultPack_U64_TYPE, 5, 0, 0, "maxcoins", ""};  // 1 = uint64_t,  maxcoins id = 5
 					getOneResultFromDb(dbLuckChainWrite, sql, pack);
-					if( fDebug ){ printf("isValidBitBetBetTx : betType=5, [%s], fDone=[%d], u6Rzt=[%s] \n", sql.c_str(), pack.fDone, u64tostr(pack.u6Rzt).c_str()); }
-					if( pack.fDone == 0 ){ return rzt; }
-					if( pack.u6Rzt > 0 )  // = 0 mean no limit, else have limit bet amount
+					if( fDebug ){ printf("isValidBitBetBetTx : betType=5, [%s], fDone=[%d], u6Rzt=[%s] \n", sql.c_str(), pack.fDone, u64tostr(pack.u6Rzt).c_str()); } */
+					uint64_t u6RefereeMaxCoins = getRefereeMaxCoins(dbLuckChainWrite, genBbp.referee);
+					if( fDebug ){ printf("isValidBitBetBetTx : betType=5, getRefereeMaxCoins()=[%s] \n", u64tostr(u6RefereeMaxCoins).c_str()); }
+					if( u6RefereeMaxCoins == 1 ){  return rzt;  }   //if( pack.fDone == 0 ){ return rzt; }
+					if( u6RefereeMaxCoins > 0 )  // = 0 mean no limit, else have limit bet amount
 					{
-						sql = "select * from AllBets where tx='" + bbp.genBet + "' and opcode=1;";  // and done=0;";
+						string sql = "select * from AllBets where tx='" + bbp.genBet + "' and opcode=1;";  // and done=0;";
 						dbOneResultCallbackPack packGen = {OneResultPack_U64_TYPE, AllBets_total_bet_amount_idx, 0, 0, "total_bet_amount", ""};  // 1 = uint64_t,  total_bet_amount id = 23
 						getOneResultFromDb(dbLuckChainWrite, sql, packGen);
 						if( fDebug ){ printf("isValidBitBetBetTx : betType=5, 2,  [%s], fDone=[%d], u6Rzt=[%s] \n", sql.c_str(), packGen.fDone, u64tostr(packGen.u6Rzt).c_str()); }
 						if( packGen.fDone == 0 ){ return rzt; }
 						uint64_t u6AllBets = bbp.u6BetAmount + packGen.u6Rzt;
-						if( fDebug ){ printf("isValidBitBetBetTx : betType=5, 2,  u6AllBets=[%s] :: maxcoins(pack.u6Rzt)=[%s] \n", u64tostr(u6AllBets).c_str(),  u64tostr(pack.u6Rzt).c_str()); }
-						if( u6AllBets > pack.u6Rzt ){ return rzt; }
+						if( fDebug ){ printf("isValidBitBetBetTx : betType=5, 2,  u6AllBets=[%s] :: maxcoins(pack.u6Rzt)=[%s] \n", u64tostr(u6AllBets).c_str(),  u64tostr(u6RefereeMaxCoins).c_str()); }
+						if( u6AllBets > u6RefereeMaxCoins ){ return rzt; }
 					}
 				}
 				uint64_t iAmount = (bbp.u6BetAmount * COIN);
 				payIdx = GetCoinAddrInTxOutIndex(tx, BitBetBurnAddress, iAmount);
 				if( payIdx >= 0 )	// Check Bet Amount, =-1 is invalid
 				{ 
-					rzt = true; 
-					if( fDebug ){ printf("isValidBitBetBetTx: Pass :) \n"); }
+					rzt = true;
+					if( bJustRcvTx )   // 2016.11.12 begin, limit bet count
+					{
+						if( genBbp.maxBetCount > 0 )
+						{
+							string sql = "select * from AllBets where tx='" + bbp.genBet + "' and opcode=1;";
+							dbOneResultCallbackPack packEst = {OneResultPack_U64_TYPE, AllBet_est_bet_count_idx, 0, 0, "est_bet_count", ""};
+							getOneResultFromDb(dbLuckChainWrite, sql, packEst);
+						if( fDebug ){ printf("isValidBitBetBetTx : bJustRcvTx,  bNewRuleActive=[%d], maxBetCount=[%d], fDone=[%d], est_bet_count=[%s], [%s] \n", bNewRuleActive, genBbp.maxBetCount, packEst.fDone, u64tostr(packEst.u6Rzt).c_str(), sql.c_str()); }
+						if( packEst.fDone == 0 ){  if( bNewRuleActive ){  rzt = false;  }  }
+						else{
+							uint64_t u6EstBetCount = packEst.u6Rzt + 1,  u6MaxBetCount = genBbp.maxBetCount;
+							if(  u6MaxBetCount == 1 ){  u6MaxBetCount++;  };   // = 2
+							if( u6EstBetCount > u6MaxBetCount )
+							{
+								if( bNewRuleActive ){  rzt = false;  }
+								if( fDebug ){  printf("isValidBitBetBetTx: u6EstBetCount(%s) > u6MaxBetCount(%s), rzt=[%d] :( \n",  u64tostr(u6EstBetCount).c_str(), u64tostr(u6MaxBetCount).c_str(), rzt);  }
+							}
+							else{
+								sql = "update AllBets set est_bet_count=(est_bet_count+1) where tx='" + bbp.genBet + "';";     
+								sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+							}
+							}
+						}
+					}   // 2016.11.12 end
+
+					if( fDebug ){ printf("isValidBitBetBetTx: Pass, rzt=[%d]  :) \n", rzt); }
 				}else{ printf("isValidBitBetBetTx: [%"PRIu64"] coins not send to [%s] :(\n", iAmount, BitBetBurnAddress.c_str()); }
 			}else{ printf("isValidBitBetBetTx : bbp.u6BetAmount(%s) < genBbp.u6MiniBetAmount(%s) :(\n", u64tostr(bbp.u6BetAmount).c_str(), u64tostr(genBbp.u6MiniBetAmount).c_str()); }
 	     }else{ printf("isValidBitBetBetTx : isValidBitBetGenesisTx() return false :(\n"); }
@@ -2494,7 +2619,7 @@ bool isValidBitBetEncashTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack &
 					if( fDebug ){ printf( "isValidBitBetEncashTx: [%s] packGen.fDone=[%d], packGen.u6Rzt=[%s] \n", sql.c_str(), packGen.fDone, u64tostr(packGen.u6Rzt).c_str()); }
 					if( (packGen.fDone > 0 ) && (packGen.u6Rzt == 0) )  // Genesis Tx exist and done = 0
 					{
-						BitBetPack genBbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
+						BitBetPack genBbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
 						int bbpRzt = GetTxBitBetParam(txGen, genBbp);
 						genBbp.tx = bbp.genBet;      int gPayIdx=0;
 						if( isValidBitBetGenesisTx(txGen, genTxHei, genBbp, gPayIdx, true) )
@@ -2571,6 +2696,15 @@ bool insertBitBetTx(const CTransaction tx, BitBetPack &bbp, uint64_t iTxHei)
 		  }
 		  else{ bbp.u6BetCount = 1; }
 		  if( iTxHei > 0 ){ bbp.u6TargetBlock = bbp.u6BlockSpace + iTxHei; }  // 2016.09.21 add
+		  if( bbp.maxBetCount == 1 ){  bbp.maxBetCount++;  }   // 2016.11.12 add
+		  if( bbp.betType == 5 )   // Real Event, 2016.11.12 add
+		  {
+			  uint64_t u6RefereeMaxCoins = getRefereeMaxCoins(dbLuckChainWrite, bbp.referee);
+			  if( u6RefereeMaxCoins > 1 ){  bbp.u6MaxBetCoins = u6RefereeMaxCoins;  }   // = 0 mean no limit, else have limit bet amount
+			  bbp.refereeNick = getRefereeNickName(dbLuckChainWrite, bbp.referee);
+			  if( fDebug ){ printf("insertBitBetTx : betType=5, u6RefereeMaxCoins=[%s], nickName=[%s] \n", u64tostr(u6RefereeMaxCoins).c_str(), bbp.refereeNick.c_str()); }
+		  }
+		  bbp.confirmed = 1;   // 2016.11.17 add
       }else if( bbp.opCode == 2 )  // Join Bet
 	  {
 			bbp.u6StartBlock = iTxHei;
@@ -2583,7 +2717,7 @@ bool insertBitBetTx(const CTransaction tx, BitBetPack &bbp, uint64_t iTxHei)
 bool acceptBitBetTx(const CTransaction& tx, uint64_t iTxHei)  // iTxHei = 0 mean that recv a tx
 {
     bool rzt = true;
-    BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
+    BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
     int bbpRzt = GetTxBitBetParam(tx, bbp);
 	if( fDebug ){ printf("acceptBitBetTx:: bbpRzt=[%d], opCode=[%d] TxHei=[%s] \n", bbpRzt, bbp.opCode, u64tostr(iTxHei).c_str()); }
     if( bbpRzt >= 14 )
@@ -2671,7 +2805,7 @@ bool processBitBetCmdTx(const CTransaction& tx, uint64_t iTxHei)
 {
     bool rzt = false;      uint64_t u6TxHei = iTxHei;
 	BitBetCommand bbc = {"", "", "", "", "", "", "", "", "", "", "", 0};
-	BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
+	BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
 	string sTx = tx.GetHash().ToString();
 	int bbcRzt = GetTxBitBetCmdParam(tx, bbc);
 	if( fDebug ){ printf("processBitBetCmdTx:: [%s] [%d] [%s] \n p1[%s] [%s] [%s] [%s] [%s] \n", sTx.c_str(), bbc.paramCount, bbc.cmdName.c_str(), bbc.p1.c_str(), bbc.p2.c_str(), bbc.p3.c_str(), bbc.p4.c_str(), bbc.p5.c_str()); }
@@ -2819,7 +2953,7 @@ if( updateBitBetRefereeEvaluate(bbc.p2, bbc.p3) ){   bbp.opCode=7;   bbp.betNum=
 int getBitBetTxType(const CTransaction& tx)
 {
     int rzt = 0;
-    BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
+    BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
     int bbpRzt = GetTxBitBetParam(tx, bbp);
     if( bbpRzt > 13 ){ rzt = bbp.opCode; }
 	return rzt;
@@ -2828,7 +2962,7 @@ int getBitBetTxType(const CTransaction& tx)
 bool isBitBetEncashTx(const CTransaction& tx)
 {
     bool rzt = false;  //( getBitBetTxType(tx) == 3 );
-    BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
+    BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
     int bbpRzt = GetTxBitBetParam(tx, bbp);
     if( (bbpRzt > 15) && (bbp.opCode == 3) ){ rzt=true; }
 	//if( fDebug ){ printf("isBitBetEncashTx:: rzt=[%d], bbpRzt=[%d] opCode = [%d] [%s] \n", rzt, bbpRzt, bbp.opCode, tx.chaindata.c_str()); }
@@ -2838,7 +2972,7 @@ bool isBitBetEncashTx(const CTransaction& tx)
 bool isBitBetEncashTx(const CTransaction& tx, uint64_t& u6ToMinerFee)
 {
     bool rzt = false;      u6ToMinerFee = 0;
-    BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
+    BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
     int bbpRzt = GetTxBitBetParam(tx, bbp);
     if( (bbpRzt > 15) && (bbp.opCode == 3) ){  u6ToMinerFee = bbp.u6StartBlock;      rzt=true;  }
 	return rzt;

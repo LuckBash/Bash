@@ -771,14 +771,6 @@ bool AppInit2()
             nConnectTimeout = nNewTimeout;
     }
 
-    if (mapArgs.count("-paytxfee"))
-    {
-        if (!ParseMoney(mapArgs["-paytxfee"], nTransactionFee))
-            return InitError(strprintf(_("Invalid amount for -paytxfee=<amount>: '%s'"), mapArgs["-paytxfee"].c_str()));
-        if (nTransactionFee > 0.25 * COIN)
-            InitWarning(_("Warning: -paytxfee is set very high! This is the transaction fee you will pay if you send a transaction."));
-    }
-
     fConfChange = GetBoolArg("-confchange", false);
 
     if (mapArgs.count("-mininput"))
@@ -1273,12 +1265,24 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
     printf("mapWallet.size() = %"PRIszu"\n",       pwalletMain->mapWallet.size());
     printf("mapAddressBook.size() = %"PRIszu"\n",  pwalletMain->mapAddressBook.size());
 
+    nTransactionFee = getMIN_TX_FEE(nBestHeight);
+    BitNet_Lottery_Create_Mini_Amount = getMIN_TXOUT_AMOUNT(nBestHeight);      MIN_Lottery_Create_Amount = BitNet_Lottery_Create_Mini_Amount;
+    if (mapArgs.count("-paytxfee"))
+    {
+        if (!ParseMoney(mapArgs["-paytxfee"], nTransactionFee))
+            return InitError(strprintf(_("Invalid amount for -paytxfee=<amount>: '%s'"), mapArgs["-paytxfee"].c_str()));
+        if (nTransactionFee > 0.25 * COIN)
+            InitWarning(_("Warning: -paytxfee is set very high! This is the transaction fee you will pay if you send a transaction."));
+    }
+
 #ifdef USE_BITNET
 	LoadIniCfg(1, 0);
 #endif	
 #ifdef QT_GUI
     initBitChain();
 #endif
+
+   openSqliteDb();
 
     if (!NewThread(StartNode, NULL))
         InitError(_("Error: could not start node"));
@@ -1291,7 +1295,7 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
     uiInterface.InitMessage(_("Done loading"));
     printf("Done loading\n");
 
-   openSqliteDb();
+   //openSqliteDb();
 
     bBitBetSystemWallet = isBitBetSystemWallet();
 /*	string sExpBetNum="0xcadcbc";  uint64_t u6Num = strToInt64(sExpBetNum, 16);   uint32_t x = u6Num;//sExpBetNum [0xcadcbc :: 0] [0x0] ";

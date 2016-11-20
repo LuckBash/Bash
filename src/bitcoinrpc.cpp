@@ -104,7 +104,7 @@ int64_t AmountFromValue(const Value& value)
     return nAmount;
 }
 
-Value ValueFromAmount(uint64_t amount)
+Value ValueFromAmount(int64_t amount)
 {
     return (double)amount / (double)COIN;
 }

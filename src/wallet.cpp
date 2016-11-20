@@ -1509,15 +1509,16 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
                 // if sub-cent change is required, the fee must be raised to at least MIN_TX_FEE
                 // or until nChange becomes zero
                 // NOTE: this depends on the exact behaviour of GetMinFee
-                if (nFeeRet < MIN_TX_FEE && nChange > 0 && nChange < CENT)
+				int64_t u6Mfee = getMIN_TX_FEE(nBestHeight);
+                if (nFeeRet < u6Mfee && nChange > 0 && nChange < CENT)
                 {
-                    int64_t nMoveToFee = min(nChange, MIN_TX_FEE - nFeeRet);
+                    int64_t nMoveToFee = min(nChange, u6Mfee - nFeeRet);
                     nChange -= nMoveToFee;
                     nFeeRet += nMoveToFee;
                 }
 
                 // 2015.09.27 add,  sub-cent change is moved to fee
-                if (nChange > 0 && nChange < MIN_TXOUT_AMOUNT)
+                if (nChange > 0 && nChange < getMIN_TXOUT_AMOUNT(nBestHeight) )
                 {
                     nFeeRet += nChange;
                     nChange = 0;
@@ -1865,7 +1866,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
             return error("CreateCoinStake : failed to calculate coin age");
 
         int64_t nReward = GetProofOfStakeReward(nCoinAge, nFees);
-		//if( fDebug ){ printf("CreateCoinStake : nReward = [%I64u], [%I64u]\n", nReward, MIN_TX_FEE); }
+		//if( fDebug ){ printf("CreateCoinStake : nReward = [%I64u], [%I64u]\n", nReward, getMIN_TX_FEE(nBestHeight)); }
         if (nReward <= 0)
 		{
 			if( fDebug ){ printf("CreateCoinStake : nReward <= 0, return false :(\n"); }

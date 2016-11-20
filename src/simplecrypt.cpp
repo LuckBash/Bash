@@ -30,6 +30,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <QtDebug>
 #include <QtGlobal>
 #include <QDateTime>
+#include <QDataStream>
 #include <QCryptographicHash>
 
 SimpleCrypt::SimpleCrypt():

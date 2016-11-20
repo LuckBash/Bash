@@ -118,10 +118,10 @@ Value getinfo(const Array& params, bool fHelp)
     obj.push_back(Pair("balance",       ValueFromAmount(pwalletMain->GetBalance())));
     obj.push_back(Pair("newmint",       ValueFromAmount(pwalletMain->GetNewMint())));
     obj.push_back(Pair("stake",         ValueFromAmount(pwalletMain->GetStake())));
-    obj.push_back(Pair("blocks",        (int)nBestHeight));
+    obj.push_back(Pair("blocks",        nBestHeight));
     obj.push_back(Pair("blockchain-compression",        (bool)dw_zip_block));
     obj.push_back(Pair("timeoffset",    (int64_t)GetTimeOffset()));
-    uint64_t mn = pindexBest->nMoneySupply - pindexBest->nMoneyBurned;
+    int64_t mn = pindexBest->nMoneySupply - pindexBest->nMoneyBurned;
     obj.push_back(Pair("moneysupply", ValueFromAmount(mn)));
     obj.push_back(Pair("moneyburned", ValueFromAmount(pindexBest->nMoneyBurned)));
     obj.push_back(Pair("connections",   (int)vNodes.size()));
