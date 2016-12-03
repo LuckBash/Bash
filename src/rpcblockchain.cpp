@@ -260,6 +260,28 @@ Value getblock(const Array& params, bool fHelp)
     return blockToJSON(block, pblockindex, params.size() > 1 ? params[1].get_bool() : false);
 }
 
+extern multimap<uint256, CBlock*> mapOrphanBlocksByPrev;
+Value processblock(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() < 1 || params.size() > 2)
+        throw runtime_error(
+            "processblock <hash>\n"
+            "Returns details of a block with given block-hash.");
+
+    std::string strHash = params[0].get_str();
+    uint256 hash(strHash);
+
+    if (mapBlockIndex.count(hash) == 0)
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Block not found");
+
+    CBlock block;
+    CBlockIndex* pblockindex = mapBlockIndex[hash];
+    block.ReadFromDisk(pblockindex, true);
+	mapBlockIndex.clear();      //mapOrphanBlocksByPrev.clear();   //mapBlockIndex.erase(hash);
+    return ProcessBlock(NULL, &block);
+    //return blockToJSON(block, pblockindex, false);
+}
+
 Value getblockinfo(const Array& params, bool fHelp)
 {
     if (fHelp || params.size() != 1)

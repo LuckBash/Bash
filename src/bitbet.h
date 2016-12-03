@@ -38,6 +38,7 @@ using namespace boost;
 //                 | Guess HASH Length | Bet Text | Lottery wallet address | Lottery wallet Private Key 
 //                 | Bettor's default Wallet Address | Lottery Tx ID | Sign message¡£
 // Bet Type: 0 = Lucky 16,  1 = Lucky Odd-Even, 2 = Lucky Big-Small, 3 = Lucky Boss, 4 = Lucky Lotto, 5 = Bet RealEvents
+//  enCashFlag = 0 mean who bet more then who get more, =1 mean "divide equally", 
 //typedef 
 struct BitBetPack
 {
@@ -48,8 +49,8 @@ struct BitBetPack
    uint64_t u6BetAmount;
    uint64_t u6MiniBetAmount;
    uint64_t u6StartBlock;
-   uint64_t u6TargetBlock, u6BetCount;
-   int betLen, betStartNum, maxBetCount, oneAddrOnce;
+   uint64_t u6TargetBlock, u6BetCount, u6OneAddrMaxBetAmount;
+   int betLen, betStartNum, maxBetCount, oneAddrOnce, enCashFlag, uniqueNumber;
    string betNum;
    string bettor;
    string genBet;
@@ -95,6 +96,7 @@ struct dbBitBetTotalAmountAndWinnerPack{
 #define Total_Blocks_of_20Days 28800
 #define Big_Target_Block_Min_Bet_Amount 1000000
 #define Mini_Banker_Bet_Amount 100000
+#define New_Rules_161129_BLK_10W 100000
 #define New_Rules_161013_Active_Block 21000
 #define New_LuckyBossRule_Active_Block 33000
 #define Max_Alive_Launch_BitBets 2000
@@ -154,6 +156,14 @@ struct dbBitBetTotalAmountAndWinnerPack{
 #define AllBet_max_bet_count_idx 34
 #define AllBet_one_addr_once_idx 35
 #define AllBet_est_bet_count_idx 36
+#define AllBet_firstOfThisAddr_idx 37
+#define AllBet_totalOfThisAddrBetCount_idx 38
+#define AllBet_totalOfThisAddrCoins_idx 39
+#define AllBet_winCoins_idx 40
+#define AllBet_winCount_idx 41
+#define AllBet_oneAddrMaxBetAmount_idx 42
+#define AllBet_enCashFlag_idx 43
+#define AllBet_uniqueNumber_idx 44
 
 extern bool bBitBetSystemWallet;
 const string system_address_1 = "BEqYrTpNeT7hSgcB8JZT3bY6BkimbnEa3Q";
@@ -169,6 +179,7 @@ extern const std::string BitBet_Magic;
 extern int dwBitNetLotteryStartBlock;
 extern int BitNetLotteryStartTestBlock_286000;
 extern int64_t BitNet_Lottery_Create_Mini_Amount;
+extern int iRecordPlayerInfo;
 
 extern bool isSystemAddress(const string sAddr);
     extern uint64_t strToInt64(const char *s);
@@ -221,12 +232,15 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern int getRunSqlResultCountForGu2(const string sql, uint64_t &rzt);
 	extern bool getOneResultFromDb(sqlite3 *dbOne, const string sql, dbOneResultCallbackPack& pack);
 	extern unsigned int getBitBetTotalBetsAndMore(const string genBet, dbBitBetTotalAmountAndWinnerPack& pack);
-	extern unsigned int getWinnersReward(sqlite3 *dbOne, int betType, const string sReferee, uint64_t u6AllRewardCoins, uint64_t u6AllWinnerBetCoins, const std::vector<txOutPairPack > allWinners, std::vector<txOutPairPack >& newWinners, uint64_t& u6ToMinerFee);
+	extern unsigned int getWinnersReward(sqlite3 *dbOne, int betType, int enCashFlag, const string sReferee, uint64_t u6AllRewardCoins, uint64_t u6AllWinnerBetCoins, const std::vector<txOutPairPack > allWinners, std::vector<txOutPairPack >& newWinners, uint64_t& u6ToMinerFee);
 	extern uint64_t bettorCanEvaluateReferee(sqlite3 *dbOne, const string sReferee, const string sBettor);
 	extern void dbLuckChainWriteSqlBegin(int bStart);
 	extern bool disconnectBitBet(const CTransaction& tx);
     extern uint64_t getRefereeMaxCoins(sqlite3 *db, const string sReferee);
 	extern string getRefereeNickName(sqlite3 *db, const string sReferee);
+    extern uint64_t getPlayerTotalBetsInAGame(sqlite3 *db, const string genBet, const string sBettor);
+    extern bool isBetNumberExist(sqlite3 *db, const string sGenTx, const string sNum, bool bJustRcvTx);
+    extern uint64_t getAGameBetCount(sqlite3 *db, const string sGenTx, const string sBettor, int betType, bool isBankerMode, bool bJustRcvTx);
 
 
 inline std::string u64tostr(uint64_t n)

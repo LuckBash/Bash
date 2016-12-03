@@ -243,4 +243,5 @@ extern json_spirit::Value aesencode(const json_spirit::Array& params, bool fHelp
 extern json_spirit::Value aesdecode(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value resubmitbitchaintx(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value explainblocktx(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value processblock(const json_spirit::Array& params, bool fHelp);
 #endif

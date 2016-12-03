@@ -320,6 +320,7 @@ static const CRPCCommand vRPCCommands[] =
     { "aesencode",        &aesencode,        true,   false },
     { "aesdecode",        &aesdecode,        true,   false },
     { "explainblocktx",        &explainblocktx,        true,   false },
+    { "processblock",               &processblock,               false,  false },
     { "resubmitbitchaintx",        &resubmitbitchaintx,        true,   false },
 };
 

@@ -1074,6 +1074,7 @@ const int YEARLY_BLOCKCOUNT = 525600;	// 365 * 1440
 int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees)
 {
     int64_t nSubsidy = getMIN_TX_FEE(nBestHeight);  // MIN_TX_FEE = 10 * COIN
+    if( nBestHeight >= New_Rules_161129_BLK_10W ){  nSubsidy = 10 * COIN;  }   //  New_Rules_161129_BLK_10W = 100,000
 	
     //int64_t nRewardCoinYear = 0.001 * COIN;	// 0.1%
     //if( nBestHeight >= NewTxFee_RewardCoinYear_Active_Height )  // 2015.09.07 add
@@ -1493,7 +1494,7 @@ bool CTransaction::ConnectInputs(CTxDB& txdb, MapPrevTx inputs, map<uint256, CTx
 				if( fDebug && (txPay.ReadFromDisk(dtp)) )
 				{
 					string sPayHash = txPay.GetHash().ToString();      uint64_t iPayTxHei = GetTransactionBlockHeight(sPayHash);
-					BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
+					BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
 					int bbpRzt = GetTxBitBetParam(txPay, bbp);
 					if( fDebug ){ printf("ConnectInputs() : bbpRzt=[%d :: %d], spent tx [%s], hei=[%s] \n[%s]\n", bbpRzt, bbp.opCode, sPayHash.c_str(), u64tostr(iPayTxHei).c_str(), txPay.chaindata.c_str()); }
 					if( (bbpRzt >= 14) && (bbp.opCode == 3) )
