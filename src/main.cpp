@@ -588,10 +588,11 @@ bool CTransaction::CheckTransaction(bool bChkMiniValue) const
         if (txout.IsEmpty() && !IsCoinBase() && !IsCoinStake())
             return DoS(100, error("CTransaction::CheckTransaction() : txout empty for user transaction"));
         // 2015.09.27 add, enforce minimum output amount
-        if( (!fBitBetEncashTx) && bChkMiniValue && (nBestHeight >= NewTxFee_RewardCoinYear_Active_Height) && (!IsCoinBase()) )
+        if( (!fBitBetEncashTx) && bChkMiniValue && (nBestHeight >= f20161111_NewTxFee_Active_Height) && (!IsCoinBase()) )
         {
-            if ((!txout.IsEmpty()) && txout.nValue < getMIN_TXOUT_AMOUNT(nBestHeight))
-                return DoS(100, error("CTransaction::CheckTransaction() : txout.nValue below minimum"));
+            uint64_t u6Fee = getMIN_TXOUT_AMOUNT(nBestHeight);
+            if ((!txout.IsEmpty()) && txout.nValue < u6Fee)   //if ((!txout.IsEmpty()) && txout.nValue < getMIN_TXOUT_AMOUNT(nBestHeight))
+                return DoS(0, error("CTransaction::CheckTransaction() : txout.nValue(%s) below minimum(%s), Hei=[%s] ", u64tostr(txout.nValue).c_str(), u64tostr(u6Fee).c_str(), u64tostr(nBestHeight).c_str()));
         }
         if (txout.nValue < 0)
             return DoS(100, error("CTransaction::CheckTransaction() : txout.nValue negative"));
