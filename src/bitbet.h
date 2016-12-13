@@ -189,7 +189,8 @@ extern int  GetCoinAddrInTxOutIndex(const CTransaction& tx, string sAddr, uint64
 extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_nValue, int iCmpType = 0);
 	extern int GetTransactionByTxStr(const string txID, CTransaction &tx);
 	extern uint64_t GetTransactionBlockHeight(const string& TxID);
-	extern string GetBlockHashStr(uint64_t nHeight);
+	extern string GetBlockHashStr(int64_t nHeight);
+    extern void balancedMining();
 	extern bool validateAddress(const string sAddr);
 	extern bool is_Txin_prevout_n_s_sendto_address(const uint256& prevoutHash, unsigned int n, const string& sTargetAddress);
 	extern bool get_Txin_prevout_n_s_TargetAddressAndAmount(const CTransaction& tx, unsigned int n, string& sTargetAddress, int64_t& iAmnt);
@@ -241,6 +242,7 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
     extern uint64_t getPlayerTotalBetsInAGame(sqlite3 *db, const string genBet, const string sBettor);
     extern bool isBetNumberExist(sqlite3 *db, const string sGenTx, const string sNum, bool bJustRcvTx);
     extern uint64_t getAGameBetCount(sqlite3 *db, const string sGenTx, const string sBettor, int betType, bool isBankerMode, bool bJustRcvTx);
+    extern bool checkUserWeight(const string sAddr);
 
 
 inline std::string u64tostr(uint64_t n)

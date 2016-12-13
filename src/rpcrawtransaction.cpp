@@ -100,7 +100,11 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, Object& entry)
                 entry.push_back(Pair("confirmations", 0));
         }
     }
+#ifdef QT_GUI
     if( GetArg("-listchaindataintxtojson", 1) ){ entry.push_back(Pair("chaindata", tx.chaindata)); }   // 2016.10.12 add
+#else
+    if( GetArg("-listchaindataintxtojson", 0) ){ entry.push_back(Pair("chaindata", tx.chaindata)); }   // 2016.10.12 add
+#endif
 }
 
 string getrawtransaction(const string txID)

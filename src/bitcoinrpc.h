@@ -244,4 +244,8 @@ extern json_spirit::Value aesdecode(const json_spirit::Array& params, bool fHelp
 extern json_spirit::Value resubmitbitchaintx(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value explainblocktx(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value processblock(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value rollbackto(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value rollbackblocks(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value testtxmsg(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value bitbetcmd(const json_spirit::Array& params, bool fHelp);
 #endif

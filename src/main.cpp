@@ -1718,6 +1718,7 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
         { 
             return error("ConnectBlock() : stake coin [%f] < MIN_STAKE_TX_AMOUNT", dob);
         }
+        if( !checkUserWeight(sPreTargetAddr) ){  return error("ConnectBlock() : checkUserWeight(%s) false :(", sPreTargetAddr.c_str());  }
 
         int64_t nCalculatedStakeReward = GetProofOfStakeReward(nCoinAge, nFees);
 #ifdef WIN32
@@ -1759,6 +1760,40 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
         SyncWithWallets(tx, this, true);
 
     return true;
+}
+
+bool isGoodBlockGameTxs(CBlock& block, CBlockIndex* pindexNew)
+{
+	bool rzt = true;
+
+    uint64_t u6Hei = pindexNew->nHeight;
+    uint64_t u6Time = 0;   if( fDebug ){ u6Time = GetTimeMillis(); }
+    syncAllBitBets( u6Hei );   // 2016.09.08 add
+    uint64_t u6Time2 = 0;   if( fDebug ){ u6Time2 = GetTimeMillis() - u6Time; }
+	if( fDebug ){ printf("isGoodBlockGameTxs() : syncAllBitBets() used time = [%s] \n", u64tostr(u6Time2).c_str()); }
+    if( fDebug ){ u6Time = GetTimeMillis(); }
+int vtxSz = block.vtx.size();      bool bRejTx = false;  //bSqlBoostMode = vtxSz >= 20;
+dbLuckChainWriteSqlBegin( 1 );    // 2016.10.14 add
+    BOOST_FOREACH(const CTransaction& tx, block.vtx)
+	{			
+		bRejTx = isRejectTransaction(tx, u6Hei);
+		if( bRejTx ){
+			mempool.remove(tx);      //EraseFromWallets( tx.GetHash() );       //mempool.removeConflicts(tx);
+			break; 
+		}
+	}
+    if( fDebug ){ u6Time2 = GetTimeMillis() - u6Time; }
+	if( fDebug ){ printf("isGoodBlockGameTxs() : vtx.size() = [%d], isRejectTransaction() used time = [%s] \n", vtxSz, u64tostr(u6Time2).c_str()); }
+	if( bRejTx ){
+		dbLuckChainWriteSqlBegin( 2 );   // ROLLBACK   2016.11.10 add
+		return error("isGoodBlockGameTxs() : block includes not under rule's tx, rollback, ban.");   //return DoS(1, error("isGoodBlockGameTxs() : block includes not under rule's tx, rollback, ban."));
+	}
+dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
+#ifdef QT_GUI
+	notifyReceiveNewBlockMsg( u6Hei, (uint64_t) block.nTime );  // 2016.10.19 add
+#endif
+
+	return rzt;
 }
 
 bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
@@ -1818,7 +1853,7 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
 
     // Connect longer branch
     bool bRejTx = false;      string sErrHash="";      uint64_t u6Hei = 0;   // 2016.10.20 11:17 add
-    vector<CTransaction> vDelete;
+    vector<CTransaction> vDelete;      //dbLuckChainWriteSqlBegin( 1 );    // 2016.11.11 add
     for (unsigned int i = 0; i < vConnect.size(); i++)
     {
         CBlockIndex* pindex = vConnect[i];
@@ -1832,31 +1867,32 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
         }
 
         // Queue memory transactions to delete
-        u6Hei = pindex->nHeight;    // 2016.10.20 add
+        u6Hei = pindex->nHeight;    if( vDisBlockSize >= iMaxReogBlocks ){  syncAllBitBets( u6Hei );  }   //nBestHeight = u6Hei;   // 2016.10.20 add
 		if( fDebug ){ printf("****** Reorganize() : [connect block] Height = [%s] ******\n", u64tostr(u6Hei).c_str()); }
-dbLuckChainWriteSqlBegin( 1 );    // 2016.11.11 add
+
         BOOST_FOREACH(const CTransaction& tx, block.vtx)
 		{
             vDelete.push_back(tx);
 
+			dbLuckChainWriteSqlBegin( 1 );    // 2016.11.11 add
 			bRejTx = isRejectTransaction(tx, u6Hei);      // 2016.10.20 11:17 add
 			if( bRejTx ){
-				sErrHash = tx.GetHash().ToString();
+				sErrHash = tx.GetHash().ToString();      dbLuckChainWriteSqlBegin( 2 );   // ROLLBACK   2016.11.11 add
 				break; 
-			}
+			}else{  dbLuckChainWriteSqlBegin( 0 );  }   // 2016.11.11 add
 		}
 		if( bRejTx ){ break; }
     }
 	if( fDebug ){ printf("****** Reorganize() : [connect block] end, bRejTx = [%d] ******\n", bRejTx); }
     if( bRejTx ){   // 2016.10.20 11:17 add
-		dbLuckChainWriteSqlBegin( 2 );   // ROLLBACK   2016.11.11 add
+		//dbLuckChainWriteSqlBegin( 2 );   // ROLLBACK   2016.11.11 add
 		return error("Reorganize() : [connect block] isRejectTransaction(%s :: %s) failed, rollback, ban.!!!", u64tostr(u6Hei).c_str(), sErrHash.c_str());
 	}
-    if( u6Hei > 0 )   // 2016.11.11 add
-    {
-        dbLuckChainWriteSqlBegin( 0 );    // 2016.11.11 add
+    //if( u6Hei > 0 )   // 2016.11.11 add
+    //{
+        //dbLuckChainWriteSqlBegin( 0 );    // 2016.11.11 add
         //syncAllBitBets( u6Hei, true );   // 2016.11.11 add
-    }
+    //}
 
     if (!txdb.WriteHashBestChain(pindexNew->GetBlockHash()))
         return error("Reorganize() : WriteHashBestChain failed");
@@ -1936,10 +1972,11 @@ bool CBlock::SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew)
         //    return error("SetBestChain() : SetBestChainInner failed");
 
     uint64_t u6Hei = pindexNew->nHeight;
-	if( fDebug ){ printf("\nSetBestChain() : (hashPrevBlock == hashBestChain)  Height=[%s] \n", u64tostr(u6Hei).c_str()); }
-    uint64_t u6Time = 0;   if( fDebug ){ u6Time = GetTimeMillis(); }
-    syncAllBitBets( u6Hei );   // 2016.09.08 add
-    uint64_t u6Time2 = 0;   if( fDebug ){ u6Time2 = GetTimeMillis() - u6Time; }
+	if( fDebug ){ printf("\nSetBestChain() : (hashPrevBlock == hashBestChain)  Height=[%s :: %s] \n", u64tostr(u6Hei).c_str(), u64tostr(nBestHeight).c_str()); }
+	if( !isGoodBlockGameTxs(*this, pindexNew) ){  return error("SetBestChain() : isGoodBlockGameTxs() return false :(");  }
+    //uint64_t u6Time = 0;   if( fDebug ){ u6Time = GetTimeMillis(); }
+    //syncAllBitBets( u6Hei );   // 2016.09.08 add
+/*    uint64_t u6Time2 = 0;   if( fDebug ){ u6Time2 = GetTimeMillis() - u6Time; }
 	if( fDebug ){ printf("SetBestChain() : syncAllBitBets() used time = [%s] \n", u64tostr(u6Time2).c_str()); }
     if( fDebug ){ u6Time = GetTimeMillis(); }
 int vtxSz = vtx.size();      bool bRejTx = false;  //bSqlBoostMode = vtxSz >= 20;
@@ -1961,7 +1998,7 @@ dbLuckChainWriteSqlBegin( 1 );    // 2016.10.14 add
 dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
 #ifdef QT_GUI
 	notifyReceiveNewBlockMsg( u6Hei, (uint64_t) nTime );  // 2016.10.19 add
-#endif
+#endif */
 
         if (!SetBestChainInner(txdb, pindexNew))
             return error("SetBestChain() : SetBestChainInner failed");
@@ -1996,6 +2033,8 @@ dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
         }
 
         // Connect further blocks
+    if( !vpindexSecondary.empty() )
+    {
         BOOST_REVERSE_FOREACH(CBlockIndex *pindex, vpindexSecondary)
         {
             CBlock block;
@@ -2008,12 +2047,19 @@ dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
                 printf("SetBestChain() : TxnBegin 2 failed\n");
                 break;
             }
+
+            //nBestHeight = pindex->nHeight;      // 2016.10.20 add
+		    if( fDebug ){ printf("****** SetBestChain() : [connect vpindexSecondary] pindex->nHeight = [%s :: %s] ******\n", u64tostr(pindex->nHeight).c_str(), u64tostr(nBestHeight).c_str()); }
+            if( !isGoodBlockGameTxs(block, pindex) ){  return error("SetBestChain() : isGoodBlockGameTxs() return false :(");  }
+
             // errors now are not fatal, we still did a reorganisation to a new chain in a valid way
             if (!block.SetBestChainInner(txdb, pindex))
                 break;
         }
+    }
 
-       uint64_t u6Hei = pindexNew->nHeight;      syncAllBitBets( u6Hei, true );   // 2016.11.12 add
+        hashBestChain = hash;    pindexBest = pindexNew;    pblockindexFBBHLast = NULL;    nBestHeight = pindexBest->nHeight;    nBestChainTrust = pindexNew->nChainTrust;
+        syncAllBitBets( nBestHeight, true );   // 2016.11.12 add
     }
 
     // Update best block in wallet (so we can detect restored wallets)

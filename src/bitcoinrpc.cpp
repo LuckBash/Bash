@@ -322,6 +322,10 @@ static const CRPCCommand vRPCCommands[] =
     { "explainblocktx",        &explainblocktx,        true,   false },
     { "processblock",               &processblock,               false,  false },
     { "resubmitbitchaintx",        &resubmitbitchaintx,        true,   false },
+    { "rollbackto", 		    &rollbackto,    	     true,      false },
+    { "rollbackblocks",		    &rollbackblocks,    	 true,      false },
+    { "testtxmsg",		    &testtxmsg,    	 true,      false },
+    { "bitbetcmd",		    &bitbetcmd,    	 true,      false },
 };
 
 CRPCTable::CRPCTable()
@@ -1282,7 +1286,8 @@ Array RPCConvertValues(const std::string &strMethod, const std::vector<std::stri
 		ConvertTo<int64_t>(params[0]);
 		ConvertTo<int64_t>(params[1]);
 	}
-
+    if (strMethod == "rollbackto"             && n > 0) ConvertTo<boost::int64_t>(params[0]);
+    if (strMethod == "rollbackblocks"         && n > 0) ConvertTo<boost::int64_t>(params[0]);
     return params;
 }
 

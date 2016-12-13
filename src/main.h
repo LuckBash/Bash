@@ -1175,11 +1175,7 @@ public:
     unsigned int nFile;
     unsigned int nBlockPos;
     uint256 nChainTrust; // ppcoin: trust score of block chain
-#ifdef Q_OS_MAC
     int64_t nHeight;
-#else
-    uint64_t nHeight;
-#endif
 
     uint64_t nMint;
     uint64_t nMoneySupply;

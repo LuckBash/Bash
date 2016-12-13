@@ -6,6 +6,9 @@
 #include "main.h"
 #include "bitcoinrpc.h"
 #include "kernel.h"
+#include "bitbet.h"
+#include "db.h"
+#include "txdb.h"
 
 using namespace json_spirit;
 using namespace std;
@@ -354,4 +357,137 @@ Value getcheckpoint(const Array& params, bool fHelp)
         result.push_back(Pair("checkpointmaster", true));
 
     return result;
+}
+
+int RollbackBlocks(int64_t nBlocks) 
+{
+    int rzt=0;      if( nBestHeight <= nBlocks ){  return rzt;  }   //"nBestHeight <= nBlocks";  }
+	int64_t nHei = nBestHeight - nBlocks;      //std::string s;
+	if( fDebug ){  printf("RollbackBlocks(%s) : from (%s) down to [%s] \n", u64tostr(nBlocks).c_str(), u64tostr(nBestHeight).c_str(), u64tostr(nHei).c_str());  }
+	try{
+		
+    // List of what to disconnect
+    CTxDB txdb;      /*vector<CBlockIndex*> vDisconnect;      int64_t i = 0;
+    for( i=nBestHeight;  i>nHei;  i-- )
+	{
+		CBlockIndex* cBlkIdx = FindBlockByHeight(i);      vDisconnect.push_back(cBlkIdx);
+	}
+    if( fDebug ){  printf("RollbackBlocks(%s) : vDisconnect.size()=[%d] \n", u64tostr(nBlocks).c_str(), vDisconnect.size());  }
+    // Disconnect shorter branch
+
+	list<CTransaction> vResurrect;
+    BOOST_FOREACH(CBlockIndex* pindex, vDisconnect)
+    {
+        CBlock block;
+        if (!block.ReadFromDisk(pindex))
+            return "RollbackBlocks() : ReadFromDisk for disconnect failed";
+        if (!block.DisconnectBlock(txdb, pindex))
+            return strprintf("RollbackBlocks() : DisconnectBlock %s failed", pindex->GetBlockHash().ToString().substr(0,20).c_str());
+
+        // Queue memory transactions to resurrect.
+        // We only do this for blocks after the last checkpoint (reorganisation before that
+        // point should only happen with -reindex/-loadblock, or a misbehaving peer.
+        BOOST_REVERSE_FOREACH(const CTransaction& tx, block.vtx)
+            if (!(tx.IsCoinBase() || tx.IsCoinStake()) && pindex->nHeight > Checkpoints::GetTotalBlocksEstimate())
+                vResurrect.push_front(tx);
+    }
+    // Resurrect memory transactions that were in the disconnected branch
+    BOOST_FOREACH(CTransaction& tx, vResurrect)
+        AcceptToMemoryPool(mempool, tx, NULL);  */
+
+	    //CValidationState state;
+        CBlock block;      CBlockIndex* pindexNew = FindBlockByHeight(nHei);      
+        if( !block.ReadFromDisk(pindexNew) ){  return -1;  }   //"ReadFromDisk failed :(";  }
+		int iMaxReogBlocks = GetArg("-maxreorganizeblks", BitBet_Standard_Confirms);
+		string sMaxReogBlks = u64tostr((uint64_t)(nBlocks + 10));      mapArgs["-maxreorganizeblks"] = sMaxReogBlks;
+		LOCK(cs_main);
+		if( block.SetBestChain(txdb, pindexNew) )   //if( SetBestChain(state, pindexNew) )
+        {
+            if( vNodes.size() > 0 )
+            {
+                LOCK(cs_vNodes);
+                BOOST_FOREACH(CNode* pnode, vNodes)
+                    pnode->PushGetBlocks(pindexBest, uint256(0));
+			}
+            rzt = nHei;   //s = "Rollback to block " + u64tostr(nHei);
+        }else{  rzt = -2;  }  // s = "RollbackBlocks false"; }
+		sMaxReogBlks = u64tostr((uint64_t)(iMaxReogBlocks));      mapArgs["-maxreorganizeblks"] = sMaxReogBlks;
+		if( fDebug ){  printf("RollbackBlocks(%s) : set MaxReogBlks=[%s] \n", u64tostr(nBlocks).c_str(), sMaxReogBlks.c_str());  }
+	} catch(std::runtime_error &e) {
+		rzt = -3;   //s = "Rollback to block error";
+		//s = strprintf("Rollback to block error: %s", e.what().c_str());
+	}
+	return rzt;   //s;
+}
+
+Value rollbackblocks(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() < 1 || params.size() > 2)
+        throw runtime_error(
+            "rollbackblocks <nBlocks=150>\n"
+            "Rollback N Blocks from current Block Chain\n"
+        );
+	return RollbackBlocks(params.size() > 0 ? params[0].get_int() : 150);
+}
+
+Value rollbackto(const Array& params, bool fHelp) 
+{
+    if (fHelp || params.size() < 1 || params.size() > 2)
+        throw runtime_error( "rollbackto <nBlocks>\n" );
+	if( params.size() > 0 )
+	{
+		int64_t x = params[0].get_int();
+		if( nBestHeight > x )
+		{
+			int64_t n = nBestHeight - x;
+			return RollbackBlocks(n);
+		}
+		
+	}
+	throw runtime_error("<nBlocks> must big than current blocks(nBestHeight)\n");
+}
+
+extern bool isRejectTransaction(const CTransaction& tx, uint64_t iTxHei);
+Value testtxmsg(const Array& params, bool fHelp) 
+{
+    if (fHelp || params.size() < 1 )
+        throw runtime_error( "testtxmsg <txmsg>\n" );
+	if( params.size() > 0 )
+	{
+        std::string sMsg = params[0].get_str();
+		CTransaction tx;      tx.chaindata = sMsg;
+		return isRejectTransaction(tx, 0);	  // nBestHeight
+	}
+	throw runtime_error("need <txmsg>\n");
+}
+
+extern string signMessage(const string strAddress, const string strMessage);
+Value bitbetcmd(const Array& params, bool fHelp) 
+{
+    if (fHelp || params.size() < 3 )
+        throw runtime_error( "bitbetcmd <params>\n" );
+	int ipc = params.size();
+	if( ipc > 3 )
+	{
+//  BitBetCMD: | Edit User | Time_1 | NickName_2 | CoinAddress_3 | weight_4 | flag_5 | Remarks_6 | System Sign_7 | System Coin Address_8
+//  BitBetCMD: | Rollback Blocks | Time_1 | CheckBlockNumber_2 | CheckBlkNumberHash_3 | RollbackBlocks_4 | System Sign_5 | System Coin Address_6
+        string sSystemAddr = GetArg("-systemaddr", system_address_1), sRzt="BitBetCMD: |";
+		std::string sCmd = params[0].get_str(),  sNick = params[1].get_str(), sCoinAddr = params[2].get_str(), p4 = params[3].get_str();
+		uint64_t u6Tm = GetTime();
+		if( sCmd == "Edit User" )
+		{
+			string p5 = params[4].get_str(), p6 = params[5].get_str();
+			string sMsg = u64tostr(u6Tm) + "," + sNick + "," + sCoinAddr;
+			string sSign = signMessage(sSystemAddr, sMsg);
+			sRzt = sRzt + "Edit User|" + u64tostr(u6Tm) + "|" + sNick + "|" + sCoinAddr + "|" + p4 + "|" + p5 + "|" + p6 + "|" + sSign + "|" + sSystemAddr;
+		}
+		else if( sCmd == "Rollback Blocks" )
+		{
+			string sMsg = u64tostr(u6Tm) + "," + sNick + "," + sCoinAddr;
+			string sSign = signMessage(sSystemAddr, sMsg);
+			sRzt = sRzt + "Rollback Blocks|" + u64tostr(u6Tm) + "|" + sNick + "|" + sCoinAddr + "|" + p4 + "|" + sSign + "|" + sSystemAddr;
+		}
+		return sRzt;
+	}
+	throw runtime_error("need <params>\n");
 }

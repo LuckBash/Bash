@@ -17,7 +17,7 @@ using namespace std;
 //
 
 extern unsigned int nMinerSleep;
-bool bMiner_SyncBlockChain = false;
+bool bMiner_SyncBlockChain = false,  bNormalMinerWeight=true;
 
 int static FormatHashBlocks(void* pbuffer, unsigned int len)
 {
@@ -585,6 +585,15 @@ void StakeMiner(CWallet *pwallet)
                 continue;
             }
         }
+        if( !bNormalMinerWeight )
+        {
+            for(int i=0; i<600; i++)
+            {
+                MilliSleep(1000);
+                if (fShutdown){  return;  }
+            }
+            bNormalMinerWeight = true;
+        }
 
         //
         // Create new block
@@ -604,7 +613,7 @@ void StakeMiner(CWallet *pwallet)
             SetThreadPriority(THREAD_PRIORITY_NORMAL);
             CheckStake(pblock.get(), *pwallet);
             SetThreadPriority(THREAD_PRIORITY_LOWEST);
-            MilliSleep(1000);
+            balancedMining();
         }
         else{
 #ifdef WIN32

@@ -39,6 +39,7 @@ const string BitBetBurnAddress = "B4T5ciTCkWauSqVAcVKy88ofjcSasUkSYU";
 const string strBitNetLotteryMagic = "BitLottery:";
 const int BitBetBeginEndBlockSpace_10 = 10;
 const int64_t BitBet_Mini_Amount = 100;  //MIN_TXOUT_AMOUNT;   // 100 * COIN
+const int64_t  Balanced_Mining_Amount = 5000000 * COIN;
 const int iBitNetBlockMargin3 = 3;
 const int BitNetBeginAndEndBlockMargin_Mini_30 = 10;
 const int BitNetBeginAndEndBlockMargin_Max_4320 = 4320;
@@ -176,14 +177,20 @@ int GetTransactionByTxStr(const string txID, CTransaction &tx)
 	return GetTransactionByTxStr(txID, tx, hashBlock);
 }
 
-string GetBlockHashStr(uint64_t nHeight)
+string GetBlockHashStr(int64_t nHeight)
 {
     string rzt = "";
 	if (nHeight < 0 || nHeight > nBestHeight)
         return rzt;
-
-    CBlockIndex* pblockindex = FindBlockByHeight(nHeight);
-    return pblockindex->phashBlock->GetHex();
+    try{
+        CBlockIndex* pblockindex = FindBlockByHeight(nHeight);
+	    if( pblockindex != NULL ){  return pblockindex->phashBlock->GetHex();  }
+	}catch (std::exception &e) {
+		printf("GetBlockHashStr:: err [%s] \n", e.what());
+	} catch (...) {
+        //PrintExceptionContinue(NULL, "GetBlockHashStr()");
+    }
+	return rzt;
 }
 
 uint64_t getTxBlockHeightBy_hashBlock( const uint256 hashBlock )
@@ -611,7 +618,7 @@ void buildLuckChainDb()
 			",[db_ver] varchar);";
    rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
 //sql = "insert Settings set Address_for_referee='BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx', db_ver='1.1012';";
-   sql = "INSERT INTO Settings (Address_for_referee, db_ver) VALUES ('BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx', '1.1129');"; 
+   sql = "INSERT INTO Settings (Address_for_referee, db_ver) VALUES ('BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx', '1.1209');"; 
    pe = 0;      rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, &pe);
    if( fDebug ){ printf("buildLuckChainDb :: Settings :: [%s] \n [%d] [%s]\n", sql.c_str(), rc, pe); }
    if( pe ){ sqlite3_free(pe);    pe=0; }
@@ -647,7 +654,8 @@ void buildLuckChainDb()
 			",[totalBetCoins] bigint DEFAULT 0"
 			",[totalWinCoins] bigint DEFAULT 0"
 			",[totalBetCount] bigint DEFAULT 0"
-			",[totalWinCount] bigint DEFAULT 0, [nTime] bigint DEFAULT 0, [sign] varchar"
+			",[totalWinCount] bigint DEFAULT 0, [nTime] bigint DEFAULT 0, [sign] varchar, [weight] integer default 3"
+			",[flag] integer default 0, [remarks] varchar default '-'"
             ");";
    pe = 0;
    rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, &pe);
@@ -772,6 +780,15 @@ if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=
 		sql = "alter table AllBets add oneAddrMaxBetAmount bigint DEFAULT 0; alter table AllBets add enCashFlag int DEFAULT 0; alter table AllBets add uniqueNumber int DEFAULT 0;";               sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
 		sql = "update AllBets set oneAddrMaxBetAmount=0, enCashFlag=0, uniqueNumber=0;";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
 		sql = "update Settings set db_ver='1.1129';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+   }
+   
+   f3 = 1.120900;   // 2016.11.12 add
+   if( f < f3 )
+   {
+		if( fDebug ){ printf("db_ver[%f] < 1.120900, upgrade \n", f); }
+		sql = "alter table Users add weight integer default 3; alter table Users add flag integer default 0; alter table Users add remarks varchar default '-';";               sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+		sql = "update Users set weight=3, flag=0, remarks='-';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+		sql = "update Settings set db_ver='1.1209';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
    }
 
    
@@ -1019,22 +1036,22 @@ bool isBitBetSignExists(const string sCmd)
 {
    bool rzt = false;
    string sql = "select count(*)  from SpentSign where sign='" + sCmd + "';";
-   char* zErrMsg = 0;
+   //char* zErrMsg = 0;
    int64_t icnt = 0;
-   int rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), selectCountCallback, (void*)&icnt, &zErrMsg);
+   int rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), selectCountCallback, (void*)&icnt, NULL);
    rzt = icnt  > 0;
-   printf("isBitBetSignExists:: [%s] \n [%d] [%s]\n", sql.c_str(), rc, zErrMsg);
-   if( zErrMsg ){ sqlite3_free(zErrMsg); }
+   if( fDebug ){  printf("isBitBetSignExists:: rzt=[%d], [%s]  \n", rzt, sql.c_str());  }
+   //if( zErrMsg ){ sqlite3_free(zErrMsg); }
    return rzt;
 }
 bool insertBitBetSign(const string sCmd)
 {
    bool rzt = false;
    string sql = "INSERT INTO SpentSign (sign) VALUES ('" + sCmd + "');";
-   char* zErrMsg = 0;
-   int rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), 0, 0, &zErrMsg);
-   printf("insertBitBetSign:: [%s] \n [%d] [%s]\n", sql.c_str(), rc, zErrMsg);
-   if( zErrMsg ){ sqlite3_free(zErrMsg); }
+   //char* zErrMsg = 0;
+   int rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), 0, 0, NULL);      rzt = (rc == SQLITE_OK);
+   if( fDebug ){  printf("insertBitBetSign:: rzt=[%d], [%s] \n", rzt, sql.c_str());  }
+   //if( zErrMsg ){ sqlite3_free(zErrMsg); }
    return rzt;
 }
 bool insertRefereeToRefereesDB(string sNick, string sAddr, string sLocal, string sFee, string sMaxCoins, string sRemark, string sPower, string sMsg, string sSign, string sSysAddr, uint64_t nTime)
@@ -1071,6 +1088,25 @@ bool updateRefereeOfRefereesDB(string sNick, string sAddr, string sValid, string
    int rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, &zErrMsg);
    if( rc != SQLITE_OK ){ printf("updateRefereeOfRefereesDB:: err [%d] [%s] \n", rc, zErrMsg); }
    if( zErrMsg ){ sqlite3_free(zErrMsg); }
+   return (rc == SQLITE_OK);
+}
+
+bool addOrEditUser(string sNick, string sAddr, string sWeight, string sFlag, string sRemarks, string sSign, uint64_t nTime)
+{
+   string sql = "INSERT INTO Users (coinAddr) VALUES('" + sAddr + "');";
+   int rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
+   if( fDebug ){  printf("addOrEditUser : [%d] [%s] \n", rc, sql.c_str()); }
+   sql = "UPDATE Users set nTime=" + u64tostr(nTime) + ", ";
+   if( (sNick.length() > 0) && (sNick != "-") ){ sql = sql + "nickName='" + sNick + "', "; }
+   if( (sWeight.length() > 0) && (sWeight != "-") ){ sql = sql + "weight=" + sWeight + ", "; }
+   if( (sFlag.length() > 0) && (sFlag != "-") ){ sql = sql + "flag=" + sFlag + ", "; }
+   if( (sRemarks.length() > 0) && (sRemarks != "-") ){ sql = sql + "remarks='" + sRemarks + "', "; }
+   if( (sSign.length() > 0) && (sSign != "-") ){ sql = sql + "sign='" + sSign + "', "; }
+   char* p = (char*)sql.c_str();  p = p + sql.length() - 2;
+   if( p[0] == ',' ){ p[0] = ' '; }
+   sql = sql + "where coinAddr='" + sAddr + "';";   if( fDebug ){ printf("addOrEditUser:: [%s] \n", sql.c_str()); }
+   rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
+   if( fDebug ){  printf("addOrEditUser:: rc=[%d] [%s] \n", rc, sql.c_str());  }
    return (rc == SQLITE_OK);
 }
 
@@ -1596,7 +1632,7 @@ if( fDebug ){ printf("synAllBitBetCallback :: no winner, set tx=[%s] done=1 \n",
 			  if( iBetType < 5 )  // Bet Real Event's result not from block hash;
               {
 				  string sWinNum = "-", sIsWiner="0";   //(iOpcode == 1) &&
-				  if( (p->bForce) || (sTgBlkHashInDb != sCurrTgBlkHash) )
+				  if( (sCurrTgBlkHash.length() > 60) && ((p->bForce) || (sTgBlkHashInDb != sCurrTgBlkHash)) )
 				  {
 					  if( (iBetType == 0) || (iBetType == 1)  || (iBetType == 2)  || (iBetType == 4) )  // Lucky 16  and Lucky Lottery direct compare bet number
 					  {
@@ -1729,7 +1765,7 @@ int setPlayerInfo(const CTransaction& tx, const BitBetPack bbp, int opc)
 			std::vector<txOutPairPack > txOutPair;       txOutPair.resize(0);
 			int iOpCount = GetTxOutDetails(tx.vout, txOutPair);
 			if( fDebug ){  printf("setPlayerInfo: bSetWin=true, GetTxOutDetails()=[%d] \n", iOpCount);  }
-			if( (iOpCount > 0) && (opc > 0) )   //if( iOpCount > 0 )
+			if( iOpCount > 0 )   // if( (iOpCount > 0) && (opc > 0) )
 			{
 				for(int i=0; i<iOpCount; i++)
 				{
@@ -1840,8 +1876,8 @@ bool disconnectBitBet(const CTransaction& tx)
 			if( bbpRzt > 15 )  // isBitBetEncashTx()
 			{
 				sGenBet = bbp.genBet;
-				sql = "UPDATE AllBets set done=0, encashTx='-' where tx='" + sGenBet + "' and opcode=1;";
-				if( fDebug ){ printf("disconnectBitBet(), opcode=3, [%s]  \n", sql.c_str()); }
+				sql = "UPDATE AllBets set done=0, encashTx='-' where gen_bet='" + sGenBet + "';";  // and opcode=1;";
+				//if( fDebug ){ printf("disconnectBitBet(), opcode=3, [%s]  \n", sql.c_str()); }
 			}
 		}
 		else{  sql = "";  }
@@ -2128,7 +2164,7 @@ int  GetTxOutDetails(const std::vector<CTxOut> &vout, std::vector<txOutPairPack 
 int  GetTxOutDetails(const CTransaction& tx, std::vector<txOutPairPack > &outPair)
 {
 	int rzt = 0;
-	if( IsFinalTx(tx, nBestHeight + 1) )
+	//if( IsFinalTx(tx, nBestHeight + 1) )
 	{
 		rzt = GetTxOutDetails(tx.vout, outPair);
 	}
@@ -2164,7 +2200,7 @@ bool isCanntSpendAddress(const CTxOut txout)
 int  GetCoinAddrInTxOutIndex(const CTransaction& tx, string sAddr, uint64_t v_nValue, int iCmpType)
 {
 	int rzt = -1;
-	if( IsFinalTx(tx, nBestHeight + 1) )
+	//if( IsFinalTx(tx, nBestHeight + 1) )
 	{
 		//BOOST_FOREACH(const CTxOut& txout, tx.vout) 	
 		for (unsigned int i = 0; i < tx.vout.size(); i++)
@@ -3088,7 +3124,7 @@ bool acceptBitBetTx(const CTransaction& tx, uint64_t iTxHei)  // iTxHei = 0 mean
 #endif
         }
     }
-	else{ if( iTxHei > 1 ){ processBitBetCmdTx(tx, iTxHei); } }
+	else{  processBitBetCmdTx(tx, iTxHei);  }  //else{ if( iTxHei > 1 ){ processBitBetCmdTx(tx, iTxHei); } }
 
 	if( (bbp.opCode == 3) && rzt ){ }
 	else{
@@ -3134,6 +3170,7 @@ bool isSendCoinFromBurnAddr(const CTransaction& tx)
 	return rzt;
 }
 
+extern int RollbackBlocks(int64_t nBlocks);
 //extern boost::signals2::signal<void (int opc, const std::string nickName, const std::string coinAddr, const std::string sFee, const std::string maxBetCoin)> NotifyaddLuckChainRefereeMsg5Param;
 bool processBitBetCmdTx(const CTransaction& tx, uint64_t iTxHei)
 {
@@ -3192,10 +3229,60 @@ bool processBitBetCmdTx(const CTransaction& tx, uint64_t iTxHei)
 				}else{ printf("processBitBetCmdTx : [%s] verifyMessage(%s, %s, %s) faile \n", bbc.cmdName.c_str(), bbc.pa.c_str(), bbc.p9.c_str(), sMsg.c_str()); }
 			}else{ printf("processBitBetCmdTx : [%s] err1 [%s]\n", bbc.cmdName.c_str(), bbc.pa.c_str()); }
 		}
+		else if( bbc.cmdName == "Edit User" )
+		{
+//  BitBetCMD: | Edit User | Time_1 | NickName_2 | CoinAddress_3 | weight_4 | flag_5 | Remarks_6 | System Sign_7 | System Coin Address_8
+			if( (bbc.paramCount > 9) && isSystemAddress(bbc.p8) )
+			{
+				string sMsg = bbc.p1 + "," + bbc.p2 + "," + bbc.p3;  // Time,NickName,CoinAddress
+				if( verifyMessage(bbc.p8, bbc.p7, sMsg) )  // bool verifyMessage(const string strAddress, const string strSign, const string strMessage)
+				{
+					if( !isBitBetSignExists(bbc.p7) )
+					{
+						insertBitBetSign(bbc.p7);   // bool addOrEditUser(string sNick, string sAddr, string sWeight, string sFlag, string sRemarks, string sSign, uint64_t nTime)
+						if( bbc.p5 == "000" )
+						{
+							string sql = "DELETE FROM Users where coinAddr='" + bbc.p3 + "';";
+							sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
+						}
+						else{  addOrEditUser(bbc.p2, bbc.p3, bbc.p4, bbc.p5, bbc.p6, bbc.p7, tx.nTime);  }
+						rzt = true;
+					}else{ printf("processBitBetCmdTx : [%s] isBitBetSignExists() = true \n", bbc.cmdName.c_str()); }
+				}else{ printf("processBitBetCmdTx : [%s] verifyMessage(%s, %s, %s) faile \n", bbc.cmdName.c_str(), bbc.p8.c_str(), bbc.p7.c_str(), sMsg.c_str()); }
+			}else{ printf("processBitBetCmdTx : [%s] err1 [%s]\n", bbc.cmdName.c_str(), bbc.p8.c_str()); }
+		}
+		else if( bbc.cmdName == "Rollback Blocks" )
+		{
+//  BitBetCMD: | Rollback Blocks | Time_1 | CheckBlockNumber_2 | CheckBlkNumberHash_3 | RollbackBlocks_4 | System Sign_5 | System Coin Address_6
+			if( (bbc.paramCount > 7) && isSystemAddress(bbc.p6) )
+			{
+				string sMsg = bbc.p1 + "," + bbc.p2 + "," + bbc.p3;  // Time,NickName,CoinAddress
+				if( verifyMessage(bbc.p6, bbc.p5, sMsg) )  // bool verifyMessage(const string strAddress, const string strSign, const string strMessage)
+				{
+					if( !isBitBetSignExists(bbc.p5) )
+					{
+						uint64_t u6RollBlks = 0,  u6ChkBlk = strToInt64( bbc.p2.c_str() );      string sChkBlkHash = "";
+						if( (u6ChkBlk > 0) && ((uint64_t)nBestHeight >= u6ChkBlk) )
+						{
+							sChkBlkHash = GetBlockHashStr(u6ChkBlk);
+							if( (bbc.p3.length() > 60) && (sChkBlkHash.length() > 60) && (sChkBlkHash != bbc.p3) )
+							{
+								insertBitBetSign(bbc.p5);
+								if( bbc.p4 == "-" ){ u6RollBlks = 300; }
+								else{  u6RollBlks = strToInt64( bbc.p4.c_str() );  }
+								if( u6RollBlks > 0 ){  RollbackBlocks( u6RollBlks );  }
+								rzt = true;
+							}else if( sChkBlkHash == bbc.p3 ){  insertBitBetSign(bbc.p5);  }
+						}
+						if( fDebug ){  printf("processBitBetCmdTx : rzt=[%d], u6RollBlks=[%s], sChkBlkHash=[%s] [%s] \n", rzt, u64tostr(u6RollBlks).c_str(), sChkBlkHash.c_str(), bbc.p3.c_str());  }
+					}else{ printf("processBitBetCmdTx : [%s] isBitBetSignExists() = true \n", bbc.cmdName.c_str()); }
+				}else{ printf("processBitBetCmdTx : [%s] verifyMessage(%s, %s, %s) faile \n", bbc.cmdName.c_str(), bbc.p6.c_str(), bbc.p5.c_str(), sMsg.c_str()); }
+			}else{ printf("processBitBetCmdTx : [%s] err1 [%s]\n", bbc.cmdName.c_str(), bbc.p6.c_str()); }
+		}
 		else if( bbc.cmdName == "Referee Decide" )
 		{
 //  BitBetCMD: | Referee Decide | Time_1 | Gen Bet_2 | Decide_3 | Sign_4 | Referee Coin Address_5
-			if( (bbc.paramCount > 4) && (bbc.p3.length() > 0) )
+			if( (u6TxHei > 1) && (bbc.paramCount > 4) && (bbc.p3.length() > 0) )
 			{
 				string sMsg = bbc.p1 + "," + bbc.p2 + "," + bbc.p3;  // Time,Gen Bet Tx, Decide
 				if( verifyMessage(bbc.p5, bbc.p4, sMsg) )  // bool verifyMessage(const string strAddress, const string strSign, const string strMessage)
@@ -3262,7 +3349,7 @@ string sql = "select * from AllBets where tx='" + bbc.p2 + "' and opcode=1 and b
 		{
 //  BitBetCMD: | Evaluate Referee | Time_1 | Referee_2 | Evaluate_3 | Sign_4 | Your Coin Address_5
 // string sTime = u64tostr( GetAdjustedTime() ),   sMsg = sTime + "," + sReferee + "," + sEvaluate;
-			if( (bbc.paramCount > 4) && (bbc.p3.length() > 0) && (bbc.p2.length() > 33) )
+			if( (u6TxHei > 1) && (bbc.paramCount > 4) && (bbc.p3.length() > 0) && (bbc.p2.length() > 33) )
 			{
 				string sMsg = bbc.p1 + "," + bbc.p2 + "," + bbc.p3;  // Time, sReferee, Evaluate
 				if( verifyMessage(bbc.p5, bbc.p4, sMsg) )  // bool verifyMessage(const string strAddress, const string strSign, const string strMessage)
@@ -3365,4 +3452,36 @@ bool updateBitBetRefereeEvaluate(const string sReferee, const string sEva)
 	   if( pe ){ sqlite3_free(pe); }
 	}
    return rzt;
+}
+
+extern bool bNormalMinerWeight;
+void balancedMining()
+{
+	if( pwalletMain != NULL )
+	{
+		int64_t i6b = pwalletMain->GetBalance() + pwalletMain->GetStake() + pwalletMain->GetUnconfirmedBalance() + pwalletMain->GetImmatureBalance();
+		if( i6b >= Balanced_Mining_Amount  ){  bNormalMinerWeight = false;  }
+	}
+	MilliSleep(1000);
+}
+bool checkUserWeight(const string sAddr)
+{
+	bool rzt=true;
+	//if( nBestHeight >= New_Rules_161129_BLK_10W )
+	{
+		string sql = "select * from Users where coinAddr='" + sAddr + "';";
+		//if( fDebug ){ printf("checkUserWeight : [%s] \n", sql.c_str()); }
+		dbOneResultCallbackPack pack = {OneResultPack_U64_TYPE, 9, 0, 0, "weight", ""};  // 1 = uint64_t, 
+		getOneResultFromDb(dbLuckChainWrite, sql, pack);
+		if( pack.fDone > 0 )  //   uint64_t u6Rzt;
+		{
+			if( pack.u6Rzt < 1 )
+			{
+				rzt = false;
+				if( isMineCoinAddress(sAddr) ){  bNormalMinerWeight = false;  }
+			}
+		}
+		if( !rzt ){ printf("checkUserWeight() : rzt=[%d], fDone=[%d : %s], [%s] \n", rzt, pack.fDone, u64tostr(pack.u6Rzt).c_str(), sql.c_str()); }
+	}
+	return rzt;
 }
