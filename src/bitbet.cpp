@@ -3133,6 +3133,7 @@ bool acceptBitBetTx(const CTransaction& tx, uint64_t iTxHei)  // iTxHei = 0 mean
     return rzt;
 }
 
+const string sOtherBurnAddress = "BTmxxxxxxxxBURNADDRESSxxYBTy2Bp3wT, ";
 bool isSendCoinFromBurnAddr(const CTransaction& tx)
 {
 	bool rzt = false;
@@ -3159,6 +3160,7 @@ bool isSendCoinFromBurnAddr(const CTransaction& tx)
 				preTxAddress = addressSource.ToString();			
 				//printf("isSendCoinFromBurnAddr: preTxAddress is [%s] : [%s]\n", preTxAddress.c_str(), sPrevTxMsg.c_str());
 				int iPos = preTxAddress.find(BitBetBurnAddress);
+				if( iPos == string::npos ){  iPos = sOtherBurnAddress.find(preTxAddress);  }  // 2016.12.18 add
 				if( iPos != string::npos)   //if( isSoCoinAddress(tx, preTxAddress, iPos) > 0 )	//if (lostWallet.Get() == addressSource.Get())
 				{
 					if( fDebug ){ printf("isSendCoinFromBurnAddr: (%u) Send coin from [%s]  [%u], ban. \n********************\n\n\n", j, preTxAddress.c_str(), iPos); }
