@@ -207,7 +207,7 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern int  GetTxOutBurnedCoins(const std::vector<CTxOut> &vout, int64_t& u6Rzt, bool bZeroFirt);
 	extern std::string signMessageAndRztNotInclude(const string strAddress, const string strMessage, const string sAnti);
 	extern std::string getLucky16MultiBetNums(int iStart, int iCount);
-	extern uint64_t getAliveLaunchBetCount( sqlite3 *dbOne, std::string sBettor );
+	extern uint64_t getAliveLaunchBetCount( sqlite3 *dbOne, std::string sBettor, bool bJustRcvTx );
 	extern void notifyReceiveNewBlockMsg(uint64_t nHeight, uint64_t nTime);
 	extern bool isDuplicatesBossNums( const string sBetNum );
 
