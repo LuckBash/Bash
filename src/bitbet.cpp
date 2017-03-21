@@ -3538,14 +3538,14 @@ bool GetOxCard(BYTE cbCardData[], BYTE cbCardCount)
 	if( cbCardCount != MAX_OX_COUNT ){  return false;  }   //ASSERT(cbCardCount==MAX_OX_COUNT);
 
 	BYTE bTemp[MAX_OX_COUNT], bTempData[MAX_OX_COUNT];
-	CopyMemory(bTempData, cbCardData,sizeof(bTempData));
+	memcpy(bTempData, cbCardData,sizeof(bTempData));
 	BYTE bSum=0;
 	for (BYTE i=0;i<cbCardCount;i++)
 	{
 		bTemp[i]=GetOXLogicValue(cbCardData[i]);
 		bSum+=bTemp[i];
 	}
-	CopyMemory(bTempData, bTemp,sizeof(bTempData));
+	memcpy(bTempData, bTemp,sizeof(bTempData));
 
 	//Find OX
 	for (BYTE i=0;i<cbCardCount-1;i++)

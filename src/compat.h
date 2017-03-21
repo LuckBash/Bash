@@ -19,6 +19,7 @@
 #include <sys/socket.h>
 #ifdef USE_ANDROID
 #include <fcntl.h>
+#include <ifaddrs.h>
 #else
 #include <sys/fcntl.h>
 #endif
@@ -26,7 +27,6 @@
 #include <netdb.h>
 #include <net/if.h>
 #include <netinet/in.h>
-#include <ifaddrs.h>
 
 typedef u_int SOCKET;
 #endif
