@@ -17,7 +17,11 @@
 #else
 #include <sys/types.h>
 #include <sys/socket.h>
+#ifdef USE_ANDROID
+#include <fcntl.h>
+#else
 #include <sys/fcntl.h>
+#endif
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <net/if.h>

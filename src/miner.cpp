@@ -18,7 +18,16 @@ using namespace std;
 
 extern unsigned int nMinerSleep;
 bool bMiner_SyncBlockChain = false,  bNormalMinerWeight=true;
+uint64_t nEstimateHeight=0;
 
+void setEstimateHeight(uint64_t newHeight)
+{
+    if( newHeight > nBestHeight )
+    {
+        nEstimateHeight = newHeight;
+        //if(fDebug) printf("setEstimateHeight(%s)\n",u64tostr(nEstimateHeight).c_str());
+    }
+}
 int static FormatHashBlocks(void* pbuffer, unsigned int len)
 {
     unsigned char* pdata = (unsigned char*)pbuffer;
@@ -521,9 +530,15 @@ bool CheckStake(CBlock* pblock, CWallet& wallet)
         return error("CheckStake() : proof-of-stake checking failed");
 
     //// debug print
-    printf("CheckStake() : new proof-of-stake block found  \n  hash: %s \nproofhash: %s  \ntarget: %s\n", hashBlock.GetHex().c_str(), proofHash.GetHex().c_str(), hashTarget.GetHex().c_str());
+	uint64_t aHei = getTxBlockHeightBy_hashBlock(pblock->hashPrevBlock);
+	if( aHei > 0 ){ aHei++; }
+    printf("CheckStake() : new proof-of-stake block found [%s : %s : %s]  \n  hash: %s \nproofhash: %s  \ntarget: %s\n", u64tostr(aHei).c_str(), u64tostr(nEstimateHeight).c_str(), u64tostr(nBestHeight).c_str(), hashBlock.GetHex().c_str(), proofHash.GetHex().c_str(), hashTarget.GetHex().c_str());
     pblock->print();
     printf("out %s\n", FormatMoney(pblock->vtx[1].GetValueOut()).c_str());
+	if( (nEstimateHeight > 0) && (aHei <= nEstimateHeight) )
+    {
+        return error("CheckStake() : generated block is stale, block height [%s <= %s, %s]", u64tostr(aHei).c_str(), u64tostr(nEstimateHeight).c_str(), u64tostr(nBestHeight).c_str());
+    }
 
     // Found a solution
     {

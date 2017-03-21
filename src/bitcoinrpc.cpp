@@ -326,6 +326,7 @@ static const CRPCCommand vRPCCommands[] =
     { "rollbackblocks",		    &rollbackblocks,    	 true,      false },
     { "testtxmsg",		    &testtxmsg,    	 true,      false },
     { "bitbetcmd",		    &bitbetcmd,    	 true,      false },
+    { "checkoxcard",		    &checkoxcard,    	 true,      false },
 };
 
 CRPCTable::CRPCTable()

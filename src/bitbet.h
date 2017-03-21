@@ -93,6 +93,7 @@ struct dbBitBetTotalAmountAndWinnerPack{
    std::vector<txOutPairPack > allWiners;
 };
 
+#define MAX_OX_COUNT 5
 #define Total_Blocks_of_20Days 28800
 #define Big_Target_Block_Min_Bet_Amount 1000000
 #define Mini_Banker_Bet_Amount 100000
@@ -210,6 +211,8 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern uint64_t getAliveLaunchBetCount( sqlite3 *dbOne, std::string sBettor, bool bJustRcvTx );
 	extern void notifyReceiveNewBlockMsg(uint64_t nHeight, uint64_t nTime);
 	extern bool isDuplicatesBossNums( const string sBetNum );
+	extern int GetOxCard(const string sCardData);
+	extern int GetOxCardFromBlock(int64_t i6BlockNumb, const string sBetNums, string& sRztCardData);
 
     extern sqlite3 *dbBitBet;
     extern sqlite3 *dbLuckChainRead;
@@ -243,7 +246,7 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
     extern bool isBetNumberExist(sqlite3 *db, const string sGenTx, const string sNum, bool bJustRcvTx);
     extern uint64_t getAGameBetCount(sqlite3 *db, const string sGenTx, const string sBettor, int betType, bool isBankerMode, bool bJustRcvTx);
     extern bool checkUserWeight(const string sAddr);
-
+uint64_t getTxBlockHeightBy_hashBlock( const uint256 hashBlock );
 
 inline std::string u64tostr(uint64_t n)
 {

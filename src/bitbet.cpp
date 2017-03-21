@@ -62,6 +62,8 @@ int GetTxBitBetParam(const CTransaction& tx, BitBetPack &bbp);
 int deleteBitBetTx(const string tx);
 int  GetTxOutDetails(const std::vector<CTxOut> &vout, std::vector<txOutPairPack > &outPair);
 static int synLuckyBossCallback(void *data, int argc, char **argv, char **azColName);
+bool isDuplicatesOXNums( const string sBetNum );
+string explainOXNums(int iBetLen, const string sBetNum, const string sBlkHash);
 
 boost::signals2::signal<void (uint64_t nBlockNum, uint64_t nTime)> NotifyReceiveNewBlockMsg;
 boost::signals2::signal<void (const BitBetPack& bbp)> NotifyReceiveNewBitBetMsg;
@@ -94,6 +96,15 @@ std::string signMessageAndRztNotInclude(const string strAddress, const string st
 	string rzt = signMessage(strAddress, strMessage);
 	while( rzt.find(sAnti) != string::npos ){ rzt = signMessage(strAddress, strMessage); }
 	return rzt;
+}
+
+int strToInt(const char *s, int iBase)
+{
+   return strtol(s, NULL, iBase);	
+}
+int strToInt(const string s, int iBase)
+{
+   return strtol(s.c_str(), NULL, iBase);
 }
 
 uint64_t strToInt64(const char *s, int iBase)
@@ -3502,6 +3513,204 @@ bool checkUserWeight(const string sAddr)
 			}
 		}
 		if( !rzt ){ printf("checkUserWeight() : rzt=[%d], fDone=[%d : %s], [%s] \n", rzt, pack.fDone, u64tostr(pack.u6Rzt).c_str(), sql.c_str()); }
+	}
+	return rzt;
+}
+
+
+#define	LOGIC_MASK_COLOR			0xF0
+#define	LOGIC_MASK_VALUE			0x0F
+int myRandom(int max, int min)
+{
+    return rand()%(max - min + 1) + min;
+}
+BYTE GetCardValue(BYTE cbCardData) { return cbCardData&LOGIC_MASK_VALUE; }
+BYTE GetOXLogicValue(BYTE cbCardData)
+{
+	//BYTE bCardColor=GetCardColor(cbCardData);
+	BYTE bCardValue = GetCardValue(cbCardData);
+	return (bCardValue>10) ? (10) : bCardValue;
+}
+
+//Get OX
+bool GetOxCard(BYTE cbCardData[], BYTE cbCardCount)
+{
+	if( cbCardCount != MAX_OX_COUNT ){  return false;  }   //ASSERT(cbCardCount==MAX_OX_COUNT);
+
+	BYTE bTemp[MAX_OX_COUNT], bTempData[MAX_OX_COUNT];
+	CopyMemory(bTempData, cbCardData,sizeof(bTempData));
+	BYTE bSum=0;
+	for (BYTE i=0;i<cbCardCount;i++)
+	{
+		bTemp[i]=GetOXLogicValue(cbCardData[i]);
+		bSum+=bTemp[i];
+	}
+	CopyMemory(bTempData, bTemp,sizeof(bTempData));
+
+	//Find OX
+	for (BYTE i=0;i<cbCardCount-1;i++)
+	{
+		for (BYTE j=i+1;j<cbCardCount;j++)
+		{
+			if((bSum-bTemp[i]-bTemp[j])%10==0)
+			{
+				BYTE bCount=0;
+				for (BYTE k=0;k<cbCardCount;k++)
+				{
+					if(k!=i && k!=j)
+					{
+						cbCardData[bCount++] = bTempData[k];
+					}
+				}//ASSERT(bCount==3);
+
+				cbCardData[bCount++] = bTempData[i];
+				cbCardData[bCount++] = bTempData[j];
+
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+int GetOXParamFromStr(const std::string betStr, BYTE cbCardData[])
+{
+	int rzt = 0;
+	string stxData = "";
+	int iLen = betStr.length();   if( iLen > MAX_BitBet_Str_Param_Len ){ return rzt; }
+	if( betStr.length() > 0 ){ stxData = betStr.c_str(); }
+	{
+		int i = 0;
+		try{
+		char *delim = ",";
+					
+		char * pp = (char *)stxData.c_str();
+        char *reserve;
+		char *pch = strtok_r(pp, delim, &reserve);
+		while (pch != NULL)
+		{
+			i++;
+			if( i > 5 ){ break; }
+			cbCardData[i-1] = strToInt(pch, 10);
+			pch = strtok_r(NULL, delim, &reserve);
+		}
+		}catch (std::exception &e) {
+			printf("GetOXParamFromStr:: err [%s]\n", e.what());
+		}
+		rzt = i;
+	}
+	return rzt;
+}
+
+int GetMaxOXNumb(BYTE cbCardData[])
+{
+	int rzt=0;
+	for (BYTE i=0; i<MAX_OX_COUNT; i++)
+	{
+		BYTE v = cbCardData[i];
+		if( (v < 10) && (v > rzt) ){ rzt = v; }
+	}
+	return rzt;
+}
+int GetOxCard(const string sCardData)
+{
+	BYTE cbCardData[MAX_OX_COUNT];   memset(&cbCardData[0], 0, sizeof(cbCardData));
+	int rzt=0, i = GetOXParamFromStr(sCardData, cbCardData);
+	printf("GetOxCard [%s], GetOXParamFromStr()=[%d] \n", sCardData.c_str(), i);
+	//if( i >= MAX_OX_COUNT )
+	{
+		//i = MAX_OX_COUNT;
+		bool b = GetOxCard(cbCardData, MAX_OX_COUNT);
+		string s = strprintf("%d,%d,%d,%d,%d", cbCardData[0], cbCardData[1], cbCardData[2], cbCardData[3], cbCardData[4]);
+		if( b )
+		{
+			rzt = cbCardData[0] + cbCardData[1] + cbCardData[2];      int z = cbCardData[3] + cbCardData[4];
+			if( (z == 10) || (z == 20) ){  rzt = rzt + z;  }
+			else{  rzt = rzt + ( z % 10);  }
+		}else{ rzt = GetMaxOXNumb(cbCardData); }
+		printf("GetOxCard b = [%d], card=[%s :: %s], OX = [%d] \n", b, s.c_str(), sCardData.c_str(), rzt);
+	}
+	return rzt;
+}
+
+bool isDuplicatesOXNums( const string sBetNum )
+{
+	bool rzt = false;
+	BitBetBossPack bp = {0, 0, 0, 0, 0, 0, 0};
+	int i = getBetBossNums(sBetNum, bp);
+	if( i > 4 )
+	{
+		if( (bp.b1 == bp.b2) || (bp.b1 == bp.b3) || (bp.b1 == bp.b4) || (bp.b1 == bp.b5) || (bp.b1 == bp.b6) ){ return true; }
+		if( (bp.b2 == bp.b1) || (bp.b2 == bp.b3) || (bp.b2 == bp.b4) || (bp.b2 == bp.b5) || (bp.b2 == bp.b6) ){ return true; }
+		if( (bp.b3 == bp.b1) || (bp.b3 == bp.b2) || (bp.b3 == bp.b4) || (bp.b3 == bp.b5) || (bp.b3 == bp.b6) ){ return true; }
+		if( (bp.b4 == bp.b1) || (bp.b4 == bp.b2) || (bp.b4 == bp.b3) || (bp.b4 == bp.b5) || (bp.b4 == bp.b6) ){ return true; }
+		if( (bp.b5 == bp.b1) || (bp.b5 == bp.b2) || (bp.b5 == bp.b3) || (bp.b5 == bp.b4) || (bp.b5 == bp.b6) ){ return true; }
+		//if( (bp.b6 == bp.b1) || (bp.b6 == bp.b2) || (bp.b6 == bp.b3) || (bp.b6 == bp.b4) || (bp.b6 == bp.b5) ){ return true; }
+	}
+	return rzt;
+}
+
+int hexStrToDec(char c)
+{
+	string s  = strprintf("0x%c", c);
+	return strToInt(s.c_str(), 16);
+}
+string hexStrToDecStr(char c)
+{
+	int i = hexStrToDec(c);
+	//printf("hexStrToDecStr(%c) :: [%d] \n", c, i);
+	return inttostr(i);
+}
+string explainOXNums(int iBetLen, const string sBetNum, const string sBlkHash)
+{
+	string rzt="";
+	if( (iBetLen  > 0) && (sBetNum.length() > 0) && (sBlkHash.length() > 63) )
+	{
+		BitBetBossPack bbbp = {0, 0, 0, 0, 0, 0, 0};
+		int i = getBetBossNums(sBetNum, bbbp);
+		if( i > 4 )
+		{
+			const char* p = sBlkHash.c_str();      int k=0;
+			/* if( (bbbp.b1 >=0 ) && (bbbp.b1 < 64) ){ rzt = rzt + "0x" + p[bbbp.b1] + ",";  k++; }
+			if( (bbbp.b2 >=0 ) && (bbbp.b2 < 64) ){ rzt = rzt + "0x" + p[bbbp.b2] + ",";  k++; }
+			if( (bbbp.b3 >=0 ) && (bbbp.b3 < 64) ){ rzt = rzt + "0x" + p[bbbp.b3] + ",";  k++; }
+			if( (bbbp.b4 >=0 ) && (bbbp.b4 < 64) ){ rzt = rzt + "0x" + p[bbbp.b4] + ",";  k++; }
+			if( (bbbp.b5 >=0 ) && (bbbp.b5 < 64) ){ rzt = rzt + "0x" + p[bbbp.b5] + ",";  k++; } */
+			//if( (bbbp.b6 >=0 ) && (bbbp.b6 < 64) ){ rzt = rzt + p[bbbp.b6]; }
+			//if( rzt.length() > 0 ) rzt = "0x" + rzt;
+			if( (bbbp.b1 >=0 ) && (bbbp.b1 < 64) ){ rzt = rzt + hexStrToDecStr(p[bbbp.b1]) + ",";  k++; }
+			if( (bbbp.b2 >=0 ) && (bbbp.b2 < 64) ){ rzt = rzt + hexStrToDecStr(p[bbbp.b2]) + ",";  k++; }
+			if( (bbbp.b3 >=0 ) && (bbbp.b3 < 64) ){ rzt = rzt + hexStrToDecStr(p[bbbp.b3]) + ",";  k++; }
+			if( (bbbp.b4 >=0 ) && (bbbp.b4 < 64) ){ rzt = rzt + hexStrToDecStr(p[bbbp.b4]) + ",";  k++; }
+			if( (bbbp.b5 >=0 ) && (bbbp.b5 < 64) ){ rzt = rzt + hexStrToDecStr(p[bbbp.b5]) + ",";  k++; }
+			if( k != 5 ){ rzt = ""; }
+		}
+		if( fDebug ){ printf("explainOXNums : sBetNum=[%s], getBetBossNums() return [%d], rzt = [%s] \n", sBetNum.c_str(), i, rzt.c_str()); }
+	}
+	return rzt;
+}
+
+int GetOxCardFromBlock(int64_t i6BlockNumb, const string sBetNums, string& sRztCardData)
+{
+	int rzt = 0;
+	string sBlkHash = GetBlockHashStr(i6BlockNumb);
+	printf("GetOxCardFromBlock :: blockhash is [%s] \n", sBlkHash.c_str());
+	if( sBlkHash.length() > 60 )
+	{
+		//string sBetNums = strprintf("%d,%d,%d,%d,%d,", myRandom(63, 0), myRandom(63, 0), myRandom(63, 0), myRandom(63, 0), myRandom(63, 0));
+		printf("GetOxCardFromBlock :: sBetNums is [%s] \n", sBetNums.c_str());
+		//BitBetBossPack bp = {0, 0, 0, 0, 0, 0, 0};
+		//int i = getBetBossNums(sBetNums, bp);
+		//printf("GetOxCardFromBlock :: i=[%d], sBetNums is [%s] \n", i, sBetNums.c_str());
+		//if( i > 4 )
+		{
+			sRztCardData = explainOXNums(5, sBetNums, sBlkHash);
+			printf("GetOxCardFromBlock :: sRztCardData is [%s] \n", sRztCardData.c_str());
+			if( sRztCardData.length() > 9 )
+			{
+				rzt = GetOxCard(sRztCardData);
+			}
+		}
 	}
 	return rzt;
 }

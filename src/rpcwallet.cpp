@@ -1469,7 +1469,9 @@ Value listsinceblock(const Array& params, bool fHelp)
 
 //extern std::string BitChain_Head;
 #ifdef QT_GUI
+#ifndef ANDROID
 extern std::string getBitChainProtoDescribeStr(std::string sBcp);
+#endif
 #endif
 void PrintTxMsg(const CTransaction& tx, json_spirit::Object& entry)
 {
@@ -1481,9 +1483,13 @@ void PrintTxMsg(const CTransaction& tx, json_spirit::Object& entry)
 		    (stxData.find("BitChain") != std::string::npos) || (stxData.find("@MSG=") != std::string::npos) || (stxData.find("BitNet") != std::string::npos) )
 		{  // not encrypt
 #ifdef QT_GUI
+#ifndef ANDROID
 			std::string sBcp = getBitChainProtoDescribeStr(stxData);  //wtx->time,  wtx->hash
 			if( sBcp.length() > 0 ){ entry.push_back(Pair("txmsg", sBcp)); }
             else entry.push_back(Pair("txmsg", stxData));
+#else
+			entry.push_back(Pair("txmsg", stxData));
+#endif
 #else
 			entry.push_back(Pair("txmsg", stxData));
 #endif
@@ -3561,12 +3567,14 @@ void DomainService(const CTransaction& tx, uint64_t iTxHei, const string sTxMsg,
 	}
 	return;
 }
-
+#ifndef ANDROID
 extern boost::signals2::signal<void (const CTransaction& tx, const string txMsg)> NotifyReceiveBitChainMsg;
 extern boost::signals2::signal<void (const string txID)> NotifyReceiveBitChainMsgOne;
+#endif
 void BitChainService(const CTransaction& tx, const string sTxHash, const string txMsg, bool bForce = false)
 {
 #ifdef QT_GUI
+#ifndef ANDROID
     if( txMsg.length() >= 88 )  //if( (GetArg("-bitchainservice", 0) > 0) || bForce )
 	{
 		int i = txMsg.find( BitChain_Head );
@@ -3579,6 +3587,7 @@ void BitChainService(const CTransaction& tx, const string sTxHash, const string 
 			if( p[0] == 0x0A ) NotifyReceiveBitChainMsgOne( sTxHash ); 
 		}
 	}
+#endif
 #endif
 }
 
@@ -3603,9 +3612,11 @@ Value resubmitbitchaintx(const Array& params, bool fHelp)
 		DomainService(tx, 1, sTxMsg, sTxHash);
 		BitChainService(tx, sTxHash, sTxMsg, true);
 #ifdef QT_GUI
+#ifndef ANDROID
 		std::string sBcp = getBitChainProtoDescribeStr(sTxMsg);
 		if( sBcp.length() > 0 ) return sBcp;
 		else return sTxMsg;
+#endif
 #else
 		return sTxMsg;
 #endif
@@ -4939,5 +4950,25 @@ Value explainblocktx(const Array& params, bool fHelp)
 		ret.push_back( Pair("Result", j) );
 	}
 	
+    return ret;
+}
+
+extern int myRandom(int max, int min);
+Value checkoxcard(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() < 1)
+	{
+		throw runtime_error(
+            "checkoxcard <ox number string>\n");
+	}
+	string sAddr = params[0].get_str();   // 1,2,3,4,5
+	int64_t i6BlockNumb = strToInt64(sAddr.c_str());
+	string sBetNums = strprintf("%d,%d,%d,%d,%d,", myRandom(63, 0), myRandom(63, 0), myRandom(63, 0), myRandom(63, 0), myRandom(63, 0));
+	//if( sAddr.length() < 9 ){  sAddr = strprintf("%d,%d,%d,%d,%d", myRandom(15, 1), myRandom(15, 1), myRandom(15, 1), myRandom(15, 1), myRandom(15, 1));  }
+	Object ret;
+	ret.push_back( Pair("BlockNumb", sAddr) );
+	ret.push_back( Pair("BetNumbs", sBetNums) );      string sRztCardData = "";
+	int b = GetOxCardFromBlock(i6BlockNumb, sBetNums, sRztCardData);  //GetOxCard(sAddr);
+	ret.push_back( Pair("RztCardData", sRztCardData) );      ret.push_back( Pair("result", b) );
     return ret;
 }

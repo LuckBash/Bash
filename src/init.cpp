@@ -76,7 +76,9 @@ int dw_Fast_Sync_Block_Active_Height = 400000;
 int dw_zip_block = 0;
 int dw_zip_limit_size = 0;
 int dw_zip_txdb = 0;
+#ifndef ANDROID
 extern void initBitChain();
+#endif
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -1287,7 +1289,9 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
 	LoadIniCfg(1, 0);
 #endif	
 #ifdef QT_GUI
+#ifndef ANDROID
     initBitChain();
+#endif
 #endif
 
    openSqliteDb();

@@ -2353,6 +2353,7 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
     return true;
 }
 
+extern void setEstimateHeight(uint64_t newHeight);
 bool CBlock::AcceptBlock(bool bPassBlock)
 {
     AssertLockHeld(cs_main);
@@ -2370,7 +2371,7 @@ bool CBlock::AcceptBlock(bool bPassBlock)
     if (mi == mapBlockIndex.end())
         return DoS(10, error("AcceptBlock() : prev block not found"));
     CBlockIndex* pindexPrev = (*mi).second;
-    uint64_t nHeight = pindexPrev->nHeight+1;
+    uint64_t nHeight = pindexPrev->nHeight+1;      setEstimateHeight(nHeight);
 
   bool bPassMode = (iFastsyncblockModeArg > 0) && (nHeight < (iFastSyncBlockHeiOk + 32));
 if( fDebug ){ printf("AcceptBlock %d hi=%d, PassMode %d\n", bPassBlock, nHeight, bPassMode); }
@@ -4277,10 +4278,14 @@ if( fDebug ){ printf("Node %s Network_id [%d] diff with [%d]\n", pfrom->addr.ToS
 
     else if( (strCommand == "block") || (strCommand == "blkzp") )
     {
-        CBlock block;     bool bZip = false;
+        CBlock block;     bool bZip = false, bError=false;     string sErr="";
+		try{
         if( strCommand == "block" ){ vRecv >> block; }
         else{
-			bZip = true;     std::string sBlock, sUnpak;     vRecv >> sBlock;
+			bZip = true;
+			if( dRecvSize < 32 ){ bError = true; }
+			else{
+			std::string sBlock, sUnpak;     vRecv >> sBlock;
 			int bSz = sBlock.length();      char* pZipBuf = (char *)sBlock.c_str();
 			int iRealSz = lzma_depack_buf((unsigned char*)pZipBuf, bSz, sUnpak);
 	        //if( fDebug ){ printf("processmessage():: ziped block size [%d], iRealSz [%d] \n", bSz, iRealSz); }
@@ -4288,7 +4293,19 @@ if( fDebug ){ printf("Node %s Network_id [%d] diff with [%d]\n", pfrom->addr.ToS
 			{
 				pZipBuf = (char *)sUnpak.c_str();
 				CBlockFromBuffer(&block, pZipBuf, iRealSz);   //rzt = CBlockFromBuffer(block, pZipBuf, iRealSz) > 12;
-			}
+			}}
+		}
+		}
+        catch (std::exception& e) {
+            bError=true;    sErr = e.what();  //PrintExceptionContinue(&e, "ProcessMessages()");
+        } catch (...) {
+            bError=true;   //PrintExceptionContinue(NULL, "ProcessMessages()");
+        }
+		if( bError )
+		{
+			if( bZip ){ pfrom->Misbehaving(1000); }
+			printf("ProcessMessage(%s, %d) got error [%s] \n", strCommand.c_str(), dRecvSize, sErr.c_str());
+			return false;
 		}
         uint256 hashBlock = block.GetHash();
 
@@ -4650,6 +4667,7 @@ bool ProcessMessages(CNode* pfrom)
         try
         {
             LOCK(cs_main);
+            if( fDebug ){ printf("ProcessMessage(%s, %u bytes) [%s] \n", strCommand.c_str(), nMessageSize, pfrom->addr.ToString().c_str()); }
             fRet = ProcessMessage(pfrom, strCommand, vRecv, msg.nTime);
             if (fShutdown)
                 break;

@@ -8,7 +8,11 @@
 #include "sync.h"
 
 #ifndef WIN32
+#ifdef USE_ANDROID
+#include <fcntl.h>
+#else
 #include <sys/fcntl.h>
+#endif
 #endif
 
 #include "strlcpy.h"

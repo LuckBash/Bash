@@ -248,4 +248,5 @@ extern json_spirit::Value rollbackto(const json_spirit::Array& params, bool fHel
 extern json_spirit::Value rollbackblocks(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value testtxmsg(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value bitbetcmd(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value checkoxcard(const json_spirit::Array& params, bool fHelp);
 #endif
