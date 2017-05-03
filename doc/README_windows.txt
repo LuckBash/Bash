@@ -1,6 +1,6 @@
-LuckChain 2.0.1.6 BETA
+LuckChain 2.0.1.7 05.03 BETA
 
-Copyright (c) 2016 LuckChain Developers
+Copyright (c) 2017 LuckChain Developers
 Copyright (c) 2013 NovaCoin Developers
 Copyright (c) 2011-2013 PPCoin Developers
 Distributed under the MIT/X11 software license, see the accompanying

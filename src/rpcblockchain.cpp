@@ -359,65 +359,94 @@ Value getcheckpoint(const Array& params, bool fHelp)
     return result;
 }
 
-int RollbackBlocks(int64_t nBlocks) 
+bool disconnectBlocksForRollback(int64_t nBeginBlockNum, CTxDB &txdb)
 {
-    int rzt=0;      if( nBestHeight <= nBlocks ){  return rzt;  }   //"nBestHeight <= nBlocks";  }
-	int64_t nHei = nBestHeight - nBlocks;      //std::string s;
-	if( fDebug ){  printf("RollbackBlocks(%s) : from (%s) down to [%s] \n", u64tostr(nBlocks).c_str(), u64tostr(nBestHeight).c_str(), u64tostr(nHei).c_str());  }
-	try{
-		
-    // List of what to disconnect
-    CTxDB txdb;      /*vector<CBlockIndex*> vDisconnect;      int64_t i = 0;
-    for( i=nBestHeight;  i>nHei;  i-- )
-	{
-		CBlockIndex* cBlkIdx = FindBlockByHeight(i);      vDisconnect.push_back(cBlkIdx);
-	}
-    if( fDebug ){  printf("RollbackBlocks(%s) : vDisconnect.size()=[%d] \n", u64tostr(nBlocks).c_str(), vDisconnect.size());  }
-    // Disconnect shorter branch
+	bool rzt=false;      if( nBestHeight <= nBeginBlockNum ){  return rzt;  }
+	int64_t k = nBestHeight - nBeginBlockNum;
+    vector<CBlockIndex*> vDisconnect;
 
-	list<CTransaction> vResurrect;
+    CBlockIndex* pblockindex = pindexBest;
+    while (pblockindex->nHeight > nBeginBlockNum)
+        pblockindex = pblockindex->pprev;
+    for (CBlockIndex* pindex = pblockindex; pindex->pnext != NULL; pindex = pindex->pnext)
+        vDisconnect.push_back(pindex);
+	std::reverse(vDisconnect.begin(), vDisconnect.end());
+	/*for(int64_t i=0; i<k; i++)
+	{
+	    CBlockIndex* pindex = FindBlockByHeight(nBeginBlockNum + i);      
+        if( pindex ){ vDisconnect.push_back(pindex); }
+	}*/
+
+    // Disconnect shorter branch
+    list<CTransaction> vResurrect;
     BOOST_FOREACH(CBlockIndex* pindex, vDisconnect)
     {
         CBlock block;
         if (!block.ReadFromDisk(pindex))
-            return "RollbackBlocks() : ReadFromDisk for disconnect failed";
+            return error("disconnectBlocksForRollback() : ReadFromDisk for disconnect failed");
         if (!block.DisconnectBlock(txdb, pindex))
-            return strprintf("RollbackBlocks() : DisconnectBlock %s failed", pindex->GetBlockHash().ToString().substr(0,20).c_str());
+            return error("disconnectBlocksForRollback() : DisconnectBlock %s failed", pindex->GetBlockHash().ToString().substr(0,20).c_str());
+		if( fDebug ){ printf("disconnectBlocksForRollback(): nHeight=[%s], [%s] \n", i64tostr(pindex->nHeight).c_str(), pindex->GetBlockHash().ToString().c_str()); }
 
         // Queue memory transactions to resurrect.
         // We only do this for blocks after the last checkpoint (reorganisation before that
         // point should only happen with -reindex/-loadblock, or a misbehaving peer.
-        BOOST_REVERSE_FOREACH(const CTransaction& tx, block.vtx)
+        /*BOOST_REVERSE_FOREACH(const CTransaction& tx, block.vtx)
             if (!(tx.IsCoinBase() || tx.IsCoinStake()) && pindex->nHeight > Checkpoints::GetTotalBlocksEstimate())
-                vResurrect.push_front(tx);
+                vResurrect.push_front(tx); */
     }
-    // Resurrect memory transactions that were in the disconnected branch
-    BOOST_FOREACH(CTransaction& tx, vResurrect)
-        AcceptToMemoryPool(mempool, tx, NULL);  */
+    // Disconnect shorter branch
+    BOOST_FOREACH(CBlockIndex* pindex, vDisconnect)
+        if (pindex->pprev){ pindex->pprev->pnext = NULL; }
 
+    // Resurrect memory transactions that were in the disconnected branch
+    //BOOST_FOREACH(CTransaction& tx, vResurrect)
+    //    AcceptToMemoryPool(mempool, tx, NULL);
+
+	rzt = true;      return rzt;
+}
+int rollBackToBlock(int64_t nBlockNum, CTxDB &txdb, bool bLock)
+{
+    int rzt=0;      if( nBestHeight <= nBlockNum ){  return rzt;  }
+	if( fDebug ){  printf("rollBackToBlock(%s) : from (%s) down to [%s] \n", u64tostr(nBlockNum).c_str(), u64tostr(nBestHeight).c_str(), i64tostr(nBlockNum).c_str());  }
+	try{
 	    //CValidationState state;
-        CBlock block;      CBlockIndex* pindexNew = FindBlockByHeight(nHei);      
+        CBlock block;      CBlockIndex* pindexNew = FindBlockByHeight(nBlockNum);      
         if( !block.ReadFromDisk(pindexNew) ){  return -1;  }   //"ReadFromDisk failed :(";  }
-		int iMaxReogBlocks = GetArg("-maxreorganizeblks", BitBet_Standard_Confirms);
-		string sMaxReogBlks = u64tostr((uint64_t)(nBlocks + 10));      mapArgs["-maxreorganizeblks"] = sMaxReogBlks;
-		LOCK(cs_main);
+		disconnectBlocksForRollback(nBlockNum, txdb);
+		//int iMaxReogBlocks = GetArg("-maxreorganizeblks", BitBet_Standard_Confirms);
+		//string sMaxReogBlks = u64tostr((uint64_t)(nBlockNum + 10));      mapArgs["-maxreorganizeblks"] = sMaxReogBlks;
+		hashBestChain = block.hashPrevBlock;
+		if( bLock ) LOCK(cs_main);
 		if( block.SetBestChain(txdb, pindexNew) )   //if( SetBestChain(state, pindexNew) )
         {
-            if( vNodes.size() > 0 )
+			if( vNodes.size() > 0 )
             {
                 LOCK(cs_vNodes);
                 BOOST_FOREACH(CNode* pnode, vNodes)
                     pnode->PushGetBlocks(pindexBest, uint256(0));
 			}
-            rzt = nHei;   //s = "Rollback to block " + u64tostr(nHei);
+            rzt = nBlockNum;   //s = "Rollback to block " + u64tostr(nHei);
         }else{  rzt = -2;  }  // s = "RollbackBlocks false"; }
-		sMaxReogBlks = u64tostr((uint64_t)(iMaxReogBlocks));      mapArgs["-maxreorganizeblks"] = sMaxReogBlks;
-		if( fDebug ){  printf("RollbackBlocks(%s) : set MaxReogBlks=[%s] \n", u64tostr(nBlocks).c_str(), sMaxReogBlks.c_str());  }
+		//sMaxReogBlks = u64tostr((uint64_t)(iMaxReogBlocks));      mapArgs["-maxreorganizeblks"] = sMaxReogBlks;
+		//if( fDebug ){  printf("RollbackBlocks(%s) : set MaxReogBlks=[%s] \n", u64tostr(nBlockNum).c_str(), sMaxReogBlks.c_str());  }
 	} catch(std::runtime_error &e) {
 		rzt = -3;   //s = "Rollback to block error";
 		//s = strprintf("Rollback to block error: %s", e.what().c_str());
 	}
-	return rzt;   //s;
+	return rzt;
+}
+
+int RollbackBlocksCore(int64_t nBlocks, bool bLock)
+{
+    int rzt=0;      if( nBestHeight <= nBlocks ){  return rzt;  }
+	int64_t nHei = nBestHeight - nBlocks;      CTxDB txdb;
+	return rollBackToBlock( nHei, txdb, bLock );
+}
+
+int RollbackBlocks(int64_t nBlocks)
+{
+    return RollbackBlocksCore( nBlocks, true );
 }
 
 Value rollbackblocks(const Array& params, bool fHelp)

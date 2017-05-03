@@ -120,6 +120,9 @@ struct dbBitBetTotalAmountAndWinnerPack{
 #define Referees_fee_idx 4
 #define Referees_maxcoins_idx 5
 
+#define MAX_USER_INVEST_COINS 10000000
+#define MAX_LUCK16_INVEST_COINS 100000
+
 #define AllBets_id_idx 0
 #define AllBets_opcode_idx 1
 #define AllBets_bet_type_idx 2
@@ -181,6 +184,8 @@ extern int dwBitNetLotteryStartBlock;
 extern int BitNetLotteryStartTestBlock_286000;
 extern int64_t BitNet_Lottery_Create_Mini_Amount;
 extern int iRecordPlayerInfo;
+extern bool bLuckChainRollbacking;
+extern CCriticalSection cs_bitbet;
 
 extern bool isSystemAddress(const string sAddr);
     extern uint64_t strToInt64(const char *s);
@@ -246,7 +251,10 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
     extern bool isBetNumberExist(sqlite3 *db, const string sGenTx, const string sNum, bool bJustRcvTx);
     extern uint64_t getAGameBetCount(sqlite3 *db, const string sGenTx, const string sBettor, int betType, bool isBankerMode, bool bJustRcvTx);
     extern bool checkUserWeight(const string sAddr);
-uint64_t getTxBlockHeightBy_hashBlock( const uint256 hashBlock );
+    uint64_t getTxBlockHeightBy_hashBlock( const uint256 hashBlock );
+    extern void updateNewBestBlkNum(int64_t blkNum);
+	extern bool rollBackBlocksAndLuckChainDb(CTxDB &txdb, bool bForce=false);
+	extern bool rollBackBlocksAndLuckChainDb(bool bForce=false);
 
 inline std::string u64tostr(uint64_t n)
 {

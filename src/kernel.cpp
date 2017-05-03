@@ -8,6 +8,7 @@
 #include "kernel.h"
 #include "txdb.h"
 #include "init.h"
+#include "main.h"
 
 #ifdef QT_GUI
 #include <QSettings>
@@ -38,7 +39,10 @@ static std::map<int, unsigned int> mapStakeModifierCheckpoints =
         ( 120000, 0xafd449b1 )
         ( 150000, 0x4ba577f0 )
         ( 200000, 0x8a90c097 )
-        ( 220000, 0x98d8877d )
+        ( 240000, 0xfd05de20 )
+        ( 250000, 0x973d71a1 )
+        ( 260000, 0xc79d4af5 )
+        ( 270000, 0x575e68da )
     ;
 
 // Hard checkpoints of stake modifiers to ensure they are deterministic (testNet)
@@ -470,34 +474,33 @@ bool CheckStakeKernelHash(CBlockIndex* pindexPrev, unsigned int nBits, const CBl
         return CheckStakeKernelHashV1(nBits, blockFrom, nTxPrevOffset, txPrev, prevout, nTimeTx, hashProofOfStake, targetProofOfStake, fPrintProofOfStake);
 }
 
+bool GetBlockByTxHash(const uint256& txHash, CBlock& rztBlk, CTransaction& rztTx)
+{
+    if( fDebug ){ printf("GetBlockByTxHash(%s) \n", txHash.ToString().c_str()); }
+	int64_t i=0, nHalfHei = nBestHeight / 2;   map<uint256, CBlockIndex*>::iterator mi = mapBlockIndex.end();      mi--;
+	for( ; mi != mapBlockIndex.begin(); --mi)
+    {
+		CBlock block;      CBlockIndex* pindex = (*mi).second;      i++;
+        if( i > nHalfHei ){ break; }
+		if( block.ReadFromDisk(pindex, true) )
+		{
+            //if( fDebug ){ printf("GetBlockByTxHash(%s) read block [%s] \n", txHash.ToString().c_str(), block.GetHash().ToString().c_str()); }
+			BOOST_FOREACH(CTransaction& tx, block.vtx)
+			{
+				if( tx.GetHash() == txHash )
+				{
+					if( fDebug ){ printf("GetBlockByTxHash(%s)  in block [%s : %s] [%s] \n", txHash.ToString().c_str(),  i64tostr(pindex->nHeight).c_str(), block.GetHash().ToString().c_str(), i64tostr(i).c_str()); }
+					rztTx = tx;   rztBlk = block;   return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
 // Check kernel hash target and coinstake signature
 bool CheckProofOfStake(CBlockIndex* pindexPrev, const CTransaction& tx, unsigned int nBits, uint256& hashProofOfStake, uint256& targetProofOfStake)
 {
-#ifdef QT_GUI
-	if( (iFastsyncblockModeArg > 0) && (iFastSyncBlockHeiOk > dw_Fast_Sync_Block_Active_Height) )
-	{
-	  if( fDebug ){ printf("CheckProofOfStake hi %d [%x] \n", pindexPrev->nHeight, pindexPrev->pnext); }
-	  //if( pindexPrev->pnext )
-	  {
-		//uint256 hs = pindexPrev->pnext->GetBlockHash();
-		std::string s = strprintf("%d", pindexPrev->nHeight + 1);  //hs.ToString();
-		QString q = "/hashProof/" + QString::fromStdString(s.c_str());
-		QSettings *ConfigIni = new QSettings(QString::fromUtf8(s_fastSyncBlock_ini.c_str()), QSettings::IniFormat, 0);		
-		s = ConfigIni->value(q, "0").toString().toStdString();
-		delete ConfigIni;
-		if( fDebug ){ printf("CheckProofOfStake hashproof [%s] \n", s.c_str()); }
-		if( s.length() > 0 )
-		{
-			uint256 hs(s);
-			if( hs > 0 ){ 
-				hashProofOfStake = hs;
-				return true; 
-			}
-		}
-	  }
-	}
-#endif
-
     if (!tx.IsCoinStake())
         return error("CheckProofOfStake() : called on non-coinstake %s", tx.GetHash().ToString().c_str());
 
@@ -507,17 +510,23 @@ bool CheckProofOfStake(CBlockIndex* pindexPrev, const CTransaction& tx, unsigned
     // First try finding the previous transaction in database
     CTxDB txdb("r");
     CTransaction txPrev;
-    CTxIndex txindex;
+    CTxIndex txindex;      CBlock block;      bool bGotBlock=false;
     if (!txPrev.ReadFromDisk(txdb, txin.prevout, txindex))
+    {
+        if( fDebug ){ printf("CheckProofOfStake() : read txPrev failed, txin.prevout =[%u], [%s] \n", txin.prevout.n, txin.prevout.hash.ToString().c_str()); }
+        if( GetBlockByTxHash(txin.prevout.hash, block, txPrev) )
+        {
+            bGotBlock = true;      goto Check02; // return true;
+        }
         return tx.DoS(1, error("CheckProofOfStake() : INFO: read txPrev failed"));  // previous transaction not in main chain, may occur during initial download
-
+    }
+Check02:
     // Verify signature
     if (!VerifySignature(txPrev, tx, 0, 0))
         return tx.DoS(100, error("CheckProofOfStake() : VerifySignature failed on coinstake %s", tx.GetHash().ToString().c_str()));
 
     // Read block header
-    CBlock block;
-    if (!block.ReadFromDisk(txindex.pos.nFile, txindex.pos.nBlockPos, false))
+    if ( !bGotBlock && !block.ReadFromDisk(txindex.pos.nFile, txindex.pos.nBlockPos, false) )
         return fDebug? error("CheckProofOfStake() : read block failed") : false; // unable to read block of previous transaction
 
     if (!CheckStakeKernelHash(pindexPrev, nBits, block, txindex.pos.nTxPos - txindex.pos.nBlockPos, txPrev, txin.prevout, tx.nTime, hashProofOfStake, targetProofOfStake, fDebug))
@@ -569,6 +578,7 @@ unsigned int GetStakeModifierChecksum(const CBlockIndex* pindex)
 }
 
 // Check stake modifier hard checkpoints
+int nLastErrornHeight=-1, nLastOknHeight=-1;
 bool CheckStakeModifierCheckpoints(uint64_t nHeight, unsigned int nStakeModifierChecksum)
 {
     if( iFastsyncblockModeArg > 0 )
@@ -581,8 +591,22 @@ bool CheckStakeModifierCheckpoints(uint64_t nHeight, unsigned int nStakeModifier
 
     if (checkpoints.count(nHeight))
     {
+#ifdef WIN32
         if( fDebug ){ printf("CheckStakeModifierCheckpoints :: nHeight [%"PRIu64"], [0x%x : 0x%x] \n", nHeight, nStakeModifierChecksum, checkpoints[nHeight]); }
-		return nStakeModifierChecksum == checkpoints[nHeight];
+#endif
+        bool b = ( nStakeModifierChecksum == checkpoints[nHeight] );
+        if( b ){ nLastOknHeight = nHeight; }
+        else{
+            if( nHeight == nLastOknHeight ){ b=true;   nLastErrornHeight = -1; }
+            else if( (nLastErrornHeight <= 0) || (nLastErrornHeight == nHeight) ) { nLastErrornHeight = nHeight;      return true; }
+        }
+        if( nLastErrornHeight > 0 )
+        {
+            if( nHeight != nLastErrornHeight ) { return false; }
+            else if( b ){ nLastErrornHeight = -1; }
+        }
+
+        return b;
     }
     return true;
 }

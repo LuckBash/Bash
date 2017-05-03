@@ -52,7 +52,7 @@ extern int fFixedChangeAddress;
 extern int fNewSocketThread;
 extern string s_BlockChain_AdBonus_Dir;
 
-
+string s_Current_Dir = "";
 string s_BlockChain_Dir = "";
 string s_fastSyncBlock_ini = "";
 string s_bestHashForFastSync = "";
@@ -813,7 +813,7 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
     //    return InitError(strprintf(_("Wallet %s resides outside data directory %s."), strWalletFileName.c_str(), strDataDir.c_str()));
 
     boost::filesystem::path pcu = boost::filesystem::current_path();
-	//string sCurDir = pcu.string().c_str();
+	s_Current_Dir = pcu.string().c_str();
 #ifndef WIN32
 	s_BlockChain_AdBonus_Dir = strDataDir + "/";
 	s_BlockChain_Dir = s_BlockChain_AdBonus_Dir;

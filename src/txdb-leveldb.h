@@ -188,6 +188,17 @@ public:
     {
         return Write(std::string("version"), nVersion);
     }
+	
+    bool ReadLuckChainBackupInfo(int64_t& nBlkNum)
+    {
+        nBlkNum = 0;
+        return Read(std::string("lkcbaknum"), nBlkNum);
+    }
+
+    bool WriteLuckChainBackupInfo(int64_t nBlkNum)
+    {
+        return Write(std::string("lkcbaknum"), nBlkNum);
+    }
 
     bool ReadTxIndex(uint256 hash, CTxIndex& txindex);
     bool UpdateTxIndex(uint256 hash, const CTxIndex& txindex);

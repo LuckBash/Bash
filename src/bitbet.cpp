@@ -13,6 +13,8 @@
 #include "lz4/lz4.h"
 #include "lzma/LzmaLib.h"
 #include <fstream>
+#include "db.h"
+#include "txdb.h"
 
 #ifdef QT_GUI
     #include "sqlite3/sqlite3.h"
@@ -48,8 +50,10 @@ int dwBitNetLotteryStartBlock = 320;
 int BitNetLotteryStartTestBlock_286000 = 123;
 int64_t BitNet_Lottery_Create_Mini_Amount = 10 * COIN;   //MIN_TXOUT_AMOUNT;
 int64_t MIN_Lottery_Create_Amount = 10 * COIN;   //MIN_TXOUT_AMOUNT;
-bool bBitBetSystemWallet = false;
+bool bBitBetSystemWallet = false, bLuckChainRollbacking=false;
 int iRecordPlayerInfo = 0;   // 2016.11.23 add
+CCriticalSection cs_bitbet;  // 2017.04.30 add
+extern string s_Current_Dir;
 
 extern bool verifyMessage(const string strAddress, const string strSign, const string strMessage);
 extern string signMessage(const string strAddress, const string strMessage);
@@ -193,10 +197,14 @@ string GetBlockHashStr(int64_t nHeight)
 {
     string rzt = "";
 	if (nHeight < 0 || nHeight > nBestHeight)
-        return rzt;
+	{
+		if( fDebug ){ printf("GetBlockHashStr() failed, [%s] < 0 or > [%s] \n", i64tostr(nHeight).c_str(), i64tostr(nBestHeight).c_str()); }
+		return rzt;
+	}
     try{
         CBlockIndex* pblockindex = FindBlockByHeight(nHeight);
 	    if( pblockindex != NULL ){  return pblockindex->phashBlock->GetHex();  }
+		else if( fDebug ){ printf("GetBlockHashStr(%s) failed \n", i64tostr(nHeight).c_str()); }
 	}catch (std::exception &e) {
 		printf("GetBlockHashStr:: err [%s] \n", e.what());
 	} catch (...) {
@@ -627,10 +635,10 @@ void buildLuckChainDb()
 
    
    sql = "Create TABLE Settings([Address_for_referee] varchar(34)"  //sql = "Create TABLE Settings([Address_for_referee] varchar(34) DEFAULT BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx"
-			",[db_ver] varchar);";
+			",[db_ver] varchar, [best_blknum] bigint);";
    rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
 //sql = "insert Settings set Address_for_referee='BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx', db_ver='1.1012';";
-   sql = "INSERT INTO Settings (Address_for_referee, db_ver) VALUES ('BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx', '1.1209');"; 
+   sql = "INSERT INTO Settings (Address_for_referee, db_ver, best_blknum) VALUES ('BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx', '1.1211', 0);"; 
    pe = 0;      rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, &pe);
    if( fDebug ){ printf("buildLuckChainDb :: Settings :: [%s] \n [%d] [%s]\n", sql.c_str(), rc, pe); }
    if( pe ){ sqlite3_free(pe);    pe=0; }
@@ -687,6 +695,16 @@ bool isTableExists(const string sTab, sqlite3 *oneDb)
    return rzt;
 }
 
+int64_t i6BackupLuckChainDb_BlkNum=0;                                                        // 2017.04.12 add
+string sBackupLuckChainDbFn="", sDataDbDir="", sLuckChainDbFn="";      // 2017.04.12 add
+bool ReadOrWriteLuckChainBackupInfoToDB(bool bRead)
+{
+	bool rzt=false;   CTxDB txdb;
+	if( bRead ){ rzt = txdb.ReadLuckChainBackupInfo(i6BackupLuckChainDb_BlkNum); }
+	else{ rzt = txdb.WriteLuckChainBackupInfo(i6BackupLuckChainDb_BlkNum); }
+	return rzt;
+}
+
 int openSqliteDb()
 {
    int  rc;
@@ -698,23 +716,37 @@ int openSqliteDb()
 #else
     iRecordPlayerInfo = GetArg("-recordplayerinfo", 0);
 #endif
-
+    sDataDbDir = GetDataDir().string();
 #ifdef WIN32
-   string sLuckChainDb = GetDataDir().string() + "\\luckchain.db",  sAllAddressDb = GetDataDir().string() + "\\alladdress.db";
+   string sLuckChainDb = sDataDbDir + "\\luckchain.db",  sAllAddressDb = GetDataDir().string() + "\\alladdress.db";
    std::replace( sLuckChainDb.begin(), sLuckChainDb.end(), '\\', '\x2f'); // replace all '\' to '/'
 #else
-   string sLuckChainDb = GetDataDir().string() + "/luckchain.db",  sAllAddressDb = GetDataDir().string() + "/alladdress.db";
+   string sLuckChainDb = sDataDbDir + "/luckchain.db",  sAllAddressDb = GetDataDir().string() + "/alladdress.db";
 #endif
 
-    filesystem::path pathLuckChainDb = sLuckChainDb;      string sLuckChainDbInAppDir = "luckchain.db";   	const char* pLuckChainDb = sLuckChainDb.c_str();
-    if( !filesystem::exists(pathLuckChainDb) )
+    if( ReadOrWriteLuckChainBackupInfoToDB(true) )   // 2017.04.12 add
 	{
-		pathLuckChainDb = sLuckChainDbInAppDir;   //sLuckChainDb = "luckchain.db";
-		if( !filesystem::exists(pathLuckChainDb) ){
-			//
-		}
-		else{ pLuckChainDb = sLuckChainDbInAppDir.c_str(); }
+		sBackupLuckChainDbFn = strprintf("%s/%s.db", sDataDbDir.c_str(), i64tostr(i6BackupLuckChainDb_BlkNum).c_str());
 	}
+
+    const char* pLuckChainDb = sLuckChainDb.c_str();      string sLuckChainDbInAppDir = "luckchain.db";   	filesystem::path pathLuckChainDbOrg = sLuckChainDbInAppDir;
+	if( filesystem::exists(pathLuckChainDbOrg) )
+	{
+		pLuckChainDb = sLuckChainDbInAppDir.c_str();
+	}else{
+		filesystem::path pathLuckChainDb = sLuckChainDb;
+		if( !filesystem::exists(pathLuckChainDb) )
+		{
+			if( GetArg("-defdbinappdir", 1) )
+			{
+				pLuckChainDb = sLuckChainDbInAppDir.c_str();
+			}else{
+				pathLuckChainDb = sLuckChainDbInAppDir;   //sLuckChainDb = "luckchain.db";
+				if( filesystem::exists(pathLuckChainDb) ){ pLuckChainDb = sLuckChainDbInAppDir.c_str(); }
+			}
+		}
+	}
+	sLuckChainDbFn = pLuckChainDb;
 
 //if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=[%d]  \n", rcSafe, pLuckChainDb, bAllBetsExist); }
    /* Open database */
@@ -725,7 +757,8 @@ int openSqliteDb()
 	{
 		buildLuckChainDb();
 	}
-if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=[%d]  \n", rcSafe, pLuckChainDb, bAllBetsExist); }
+    if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=[%d]  \n", rcSafe, pLuckChainDb, bAllBetsExist); }
+	if( fDebug ){ printf("i6BackupLuckChainDb_BlkNum=[%s], sBackupLuckChainDbFn=[%s] \n", i64tostr(i6BackupLuckChainDb_BlkNum).c_str(), sBackupLuckChainDbFn.c_str()); }
 
    string sql = "SELECT * from Settings;";
    dbOneResultCallbackPack pack = {OneResultPack_STR_TYPE, 1, 0, 0, "db_ver", ""};
@@ -801,6 +834,14 @@ if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=
 		sql = "alter table Users add weight integer default 3; alter table Users add flag integer default 0; alter table Users add remarks varchar default '-';";               sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
 		sql = "update Users set weight=3, flag=0, remarks='-';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
 		sql = "update Settings set db_ver='1.1209';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+   }
+
+   f3 = 1.121100;   // 2017.04.11 add
+   if( f < f3 )
+   {
+		if( fDebug ){ printf("db_ver[%f] < 1.121100, upgrade \n", f); }
+		sql = "alter table Settings add best_blknum bigint default 0;";               sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+		sql = "update Settings set best_blknum=0, db_ver='1.1211';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
    }
 
    
@@ -1004,6 +1045,7 @@ int getMultiGenBetCountForGui(const string s, uint64_t &rzt)
 }
 int getRunSqlResultCountForGui(const string sql, uint64_t &rzt)
 {
+   if( bLuckChainRollbacking ){  rzt=0;   return 0;  }
    return sqlite3_exec(dbLuckChainGui, sql.c_str(), selectCountCallback, (void*)&rzt, NULL);
 }
 int getRunSqlResultCountForGu2(const string sql, uint64_t &rzt)
@@ -1037,10 +1079,10 @@ void insertProcessedBlock(int nHi, string sHash)
    sqlite3_exec(dbAllAddress, sql.c_str(), NULL, NULL, NULL);
 }
 
-bool isBetTxExists(const string sTx)
+bool isBetTxExists(const string sTx, const string sTableName = "AllBets")
 {
    bool rzt = false;
-   string sql = "select count(*)  from AllBets where tx='" + sTx + "';";
+   string sql = "select count(*)  from " + sTableName + " where tx='" + sTx + "';";
    char* zErrMsg = 0;
    int64_t icnt = 0;
    int rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), selectCountCallback, (void*)&icnt, &zErrMsg);
@@ -1855,6 +1897,7 @@ bool disconnectBitBet(const CTransaction& tx)
 	int bbpRzt = GetTxBitBetParam(tx, bbp);
    if( bbpRzt >= 14 )
    {
+        LOCK(cs_bitbet);  // 2017.04.30
 		int iOpCode = 0;      string sql = "SELECT * from AllBets where tx='" + sTx + "';";
 		dbOneResultCallbackPack pack = {OneResultPack_U64_TYPE, AllBets_opcode_idx, 0, 0, "opcode", ""};
 	   if( bbp.opCode < 3 ){  getOneResultFromDb(dbLuckChainWrite, sql, pack);      iOpCode = pack.u6Rzt;  }
@@ -1937,6 +1980,7 @@ bool syncAllBitBets(uint64_t nHeight, bool vForce)
 {
     uint64_t u6Time = 0;   if( fDebug ){ u6Time = GetTimeMillis(); }
    bool rzt = false;
+    LOCK(cs_bitbet);  // 2017.04.30
    //string sql = "SELECT * from AllBets where done=0 and confirmed<" + inttostr(BitBetBeginEndBlockSpace_10) + ";";
    string sql = "SELECT * from AllBets where opcode=1 and done=0; ";
    synAllBitBetPack abbp;  // = {1, nBestHeight, 0};
@@ -3070,7 +3114,7 @@ bool isValidBitBetEncashTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack &
 bool insertBitBetTx(const CTransaction tx, BitBetPack &bbp, uint64_t iTxHei, const string sTableName = "AllBets")
 {
    bool rzt = false;
-   if( !isBetTxExists(bbp.tx) )
+   if( !isBetTxExists(bbp.tx, sTableName) )
    {
       bbp.u6Time = tx.nTime;
       if( bbp.opCode == 1 )  // Launch bet
@@ -3110,6 +3154,7 @@ bool acceptBitBetTx(const CTransaction& tx, uint64_t iTxHei)  // iTxHei = 0 mean
     BitBetPack bbp = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0};
     int bbpRzt = GetTxBitBetParam(tx, bbp);
 	if( fDebug ){ printf("acceptBitBetTx:: bbpRzt=[%d], opCode=[%d] TxHei=[%s] \n", bbpRzt, bbp.opCode, u64tostr(iTxHei).c_str()); }
+    LOCK(cs_bitbet);  // 2017.04.30
     if( bbpRzt >= 14 )
     {
         int payIdx=0;      bbp.tx = tx.GetHash().ToString();
@@ -3713,4 +3758,78 @@ int GetOxCardFromBlock(int64_t i6BlockNumb, const string sBetNums, string& sRztC
 		}
 	}
 	return rzt;
+}
+
+bool copyFile(const char *SourceFile, const char *NewFile)
+{
+    bool rzt=false;   ifstream in;   ofstream out;
+    in.open(SourceFile, ios::binary);
+    if( in.fail() )
+    {
+       in.close();   out.close();   return rzt;
+    }
+    out.open(NewFile, ios::binary);
+    if(out.fail())
+    {
+       in.close();   out.close();
+    }else{
+        out << in.rdbuf();   out.close();   in.close();   rzt=true;
+    }
+	return rzt;
+}
+void myDeleteFile(const string sFn)
+{
+#ifndef WIN32
+					remove(sFn.c_str());
+#else
+					DeleteFileA(sFn.c_str());
+#endif
+}
+
+extern int rollBackToBlock(int64_t nBlockNum, CTxDB &txdb, bool bLock);
+void updateNewBestBlkNum(int64_t blkNum)
+{
+    string sql = strprintf("update Settings set best_blknum=%s;", i64tostr(blkNum).c_str());      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+	if( fDebug ){ printf("updateNewBestBlkNum(%s):: i6BackupLuckChainDb_BlkNum=[%s], sBackupLuckChainDbFn=[%s] \n", i64tostr(blkNum).c_str(), i64tostr(i6BackupLuckChainDb_BlkNum).c_str(), sBackupLuckChainDbFn.c_str()); }
+	bool bAutoRest = GetArg("-autobackupdb", 1) > 0;
+	if( bAutoRest && (blkNum > 100000) && (blkNum > i6BackupLuckChainDb_BlkNum) )
+	{
+		int64_t i6 = i6BackupLuckChainDb_BlkNum + (3 * 60);  //(60 * 24);
+		if( (i6BackupLuckChainDb_BlkNum < 10000) || (blkNum > i6) )
+		{
+			string sNewDb = strprintf("%s/%s.db", sDataDbDir.c_str(), i64tostr(blkNum).c_str());
+			if( copyFile(sLuckChainDbFn.c_str(), sNewDb.c_str()) )
+			{
+				if( sBackupLuckChainDbFn.length() > 6 ){ myDeleteFile(sBackupLuckChainDbFn); }   // delete old backup db file
+				i6BackupLuckChainDb_BlkNum = blkNum;   sBackupLuckChainDbFn = sNewDb;
+				ReadOrWriteLuckChainBackupInfoToDB(false);
+			}
+			if( fDebug ){ printf("updateNewBestBlkNum(%s):: sNewDb=[%s] \n", i64tostr(blkNum).c_str(),  sNewDb.c_str()); }
+		}
+	}
+}
+
+bool rollBackBlocksAndLuckChainDb(CTxDB &txdb, bool bForce)
+{
+	bool rzt=false;
+	if( !bForce ){ if( GetArg("-autorestluckchain", 0) < 1 ){ return rzt; } }
+
+	if( fDebug ){ printf("rollBackBlocksAndLuckChainDb():: nBestHeight=[%s], i6BackupLuckChainDb_BlkNum=[%s], sBackupLuckChainDbFn=[%s] \n", i64tostr(nBestHeight).c_str(), i64tostr(i6BackupLuckChainDb_BlkNum).c_str(), sBackupLuckChainDbFn.c_str()); }
+	if( (i6BackupLuckChainDb_BlkNum > 100000) && (sBackupLuckChainDbFn.length() > 6) )
+	{
+		bLuckChainRollbacking=true;      closeLuckChainDB();
+		if( copyFile(sBackupLuckChainDbFn.c_str(), sLuckChainDbFn.c_str()) )
+		{
+			int64_t i6 = i6BackupLuckChainDb_BlkNum + 1;      openSqliteDb();      rollBackToBlock(i6, txdb, false);      rzt = true;
+		}else{ openSqliteDb(); }
+		bLuckChainRollbacking = false;
+	}
+	if( fDebug ){ printf("rollBackBlocksAndLuckChainDb():: return [%d] \n", rzt); }
+
+	return rzt;
+}
+
+bool rollBackBlocksAndLuckChainDb(bool bForce)
+{
+    CTxDB txdb;   return rollBackBlocksAndLuckChainDb(txdb, bForce);
 }

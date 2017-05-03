@@ -19,10 +19,10 @@
 #include <sys/socket.h>
 #ifdef USE_ANDROID
 #include <fcntl.h>
-#include <ifaddrs.h>
 #else
 #include <sys/fcntl.h>
 #endif
+#include <ifaddrs.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <net/if.h>

@@ -600,14 +600,15 @@ void StakeMiner(CWallet *pwallet)
                 continue;
             }
         }
-        if( !bNormalMinerWeight )
+        balancedMining();
+		if( !bNormalMinerWeight )
         {
             for(int i=0; i<600; i++)
             {
                 MilliSleep(1000);
                 if (fShutdown){  return;  }
             }
-            bNormalMinerWeight = true;
+            return;
         }
 
         //

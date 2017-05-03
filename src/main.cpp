@@ -1575,7 +1575,7 @@ bool CBlock::DisconnectBlock(CTxDB& txdb, CBlockIndex* pindex)
     BOOST_FOREACH(CTransaction& tx, vtx)
 	{
         SyncWithWallets(tx, this, false, false);
-		disconnectBitBet(tx);   // 2016.10.19 add
+		if( !bLuckChainRollbacking ) disconnectBitBet(tx);   // 2016.10.19 add
 	}
 
     return true;
@@ -1796,6 +1796,12 @@ dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
 	return rzt;
 }
 
+void setBestChainParam(const uint256 hash, CBlockIndex* pindexNew)
+{
+    hashBestChain = hash;    pindexBest = pindexNew;    pblockindexFBBHLast = NULL;    nBestHeight = pindexBest->nHeight;    nBestChainTrust = pindexNew->nChainTrust;
+}
+
+bool bReorganizeError=false;
 bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
 {
     printf("REORGANIZE\n");
@@ -1829,9 +1835,11 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
     printf("REORGANIZE: Disconnect %"PRIszu" blocks; %s..%s\n", vDisconnect.size(), pfork->GetBlockHash().ToString().substr(0,20).c_str(), pindexBest->GetBlockHash().ToString().substr(0,20).c_str());
     printf("REORGANIZE: Connect %"PRIszu" blocks; %s..%s\n", vConnect.size(), pfork->GetBlockHash().ToString().substr(0,20).c_str(), pindexNew->GetBlockHash().ToString().substr(0,20).c_str());
 
-    int iMaxReogBlocks = GetArg("-maxreorganizeblks", BitBet_Standard_Confirms);
+    int iMaxReogBlocks = GetArg("-maxreorganizeblks", 0);  // BitBet_Standard_Confirms);
     if( (iMaxReogBlocks > 0) && (vDisBlockSize >= iMaxReogBlocks) )   //  = 10,  2016.11.19 add
-        return error("Reorganize() : Disconnect (%d >= %d) blocks, ban. ", vDisBlockSize, iMaxReogBlocks);
+	{
+        bReorganizeError = true;      return error("Reorganize() : Disconnect (%d >= %d) blocks, ban. ", vDisBlockSize, iMaxReogBlocks);
+	}
 
     // Disconnect shorter branch
     list<CTransaction> vResurrect;
@@ -1852,8 +1860,7 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
     }
 
     // Connect longer branch
-    bool bRejTx = false;      string sErrHash="";      uint64_t u6Hei = 0;   // 2016.10.20 11:17 add
-    vector<CTransaction> vDelete;      //dbLuckChainWriteSqlBegin( 1 );    // 2016.11.11 add
+    vector<CTransaction> vDelete;
     for (unsigned int i = 0; i < vConnect.size(); i++)
     {
         CBlockIndex* pindex = vConnect[i];
@@ -1867,13 +1874,44 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
         }
 
         // Queue memory transactions to delete
+        BOOST_FOREACH(const CTransaction& tx, block.vtx)
+            vDelete.push_back(tx);
+    }
+
+    if (!txdb.WriteHashBestChain(pindexNew->GetBlockHash()))
+        return error("Reorganize() : WriteHashBestChain failed");
+
+    // Make sure it's successfully written to disk before changing memory structure
+    if (!txdb.TxnCommit())
+        return error("Reorganize() : TxnCommit failed");
+
+    // Disconnect shorter branch
+    BOOST_FOREACH(CBlockIndex* pindex, vDisconnect)
+        if (pindex->pprev)
+            pindex->pprev->pnext = NULL;
+
+    // Connect longer branch
+    BOOST_FOREACH(CBlockIndex* pindex, vConnect)
+        if (pindex->pprev)
+            pindex->pprev->pnext = pindex;
+
+
+    // Connect luckchain games
+    bool bRejTx = false;      string sErrHash="";      uint64_t u6Hei = 0;   // 2016.10.20 11:17 add
+    //dbLuckChainWriteSqlBegin( 1 );    // 2016.11.11 add
+    for (unsigned int i = 0; i < vConnect.size(); i++)
+    {
+        CBlockIndex* pindex = vConnect[i];
+        CBlock block;
+        if (!block.ReadFromDisk(pindex))
+            return error("Reorganize() : ReadFromDisk for connect failed");
+
+        //setBestChainParam(pindex->GetBlockHash(), pindex);  // 2017.04.29 add
         u6Hei = pindex->nHeight;    if( vDisBlockSize >= iMaxReogBlocks ){  syncAllBitBets( u6Hei );  }   //nBestHeight = u6Hei;   // 2016.10.20 add
 		if( fDebug ){ printf("****** Reorganize() : [connect block] Height = [%s] ******\n", u64tostr(u6Hei).c_str()); }
 
         BOOST_FOREACH(const CTransaction& tx, block.vtx)
 		{
-            vDelete.push_back(tx);
-
 			dbLuckChainWriteSqlBegin( 1 );    // 2016.11.11 add
 			bRejTx = isRejectTransaction(tx, u6Hei);      // 2016.10.20 11:17 add
 			if( bRejTx ){
@@ -1894,26 +1932,13 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
         //syncAllBitBets( u6Hei, true );   // 2016.11.11 add
     //}
 
-    if (!txdb.WriteHashBestChain(pindexNew->GetBlockHash()))
-        return error("Reorganize() : WriteHashBestChain failed");
 
-    // Make sure it's successfully written to disk before changing memory structure
-    if (!txdb.TxnCommit())
-        return error("Reorganize() : TxnCommit failed");
-
-    // Disconnect shorter branch
-    BOOST_FOREACH(CBlockIndex* pindex, vDisconnect)
-        if (pindex->pprev)
-            pindex->pprev->pnext = NULL;
-
-    // Connect longer branch
-    BOOST_FOREACH(CBlockIndex* pindex, vConnect)
-        if (pindex->pprev)
-            pindex->pprev->pnext = pindex;
-
+    if( vDisBlockSize < BitBet_Standard_Confirms )   //  = 10,  2017.04.29 add
+    {
     // Resurrect memory transactions that were in the disconnected branch
     BOOST_FOREACH(CTransaction& tx, vResurrect)
         AcceptToMemoryPool(mempool, tx, NULL);
+    }
 
     // Delete redundant memory transactions that are in the connected branch
     BOOST_FOREACH(CTransaction& tx, vDelete) {
@@ -1932,6 +1957,8 @@ bool CBlock::SetBestChainInner(CTxDB& txdb, CBlockIndex *pindexNew)
 {
     uint256 hash = GetHash();
 
+    if( !bLuckChainRollbacking )
+    {
     // Adding to current best branch
     if (!ConnectBlock(txdb, pindexNew) || !txdb.WriteHashBestChain(hash))
     {
@@ -1941,6 +1968,7 @@ bool CBlock::SetBestChainInner(CTxDB& txdb, CBlockIndex *pindexNew)
     }
     if (!txdb.TxnCommit())
         return error("SetBestChain() : TxnCommit failed");
+    }
 
     // Add to current best branch
     pindexNew->pprev->pnext = pindexNew;
@@ -1973,7 +2001,8 @@ bool CBlock::SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew)
 
     uint64_t u6Hei = pindexNew->nHeight;
 	if( fDebug ){ printf("\nSetBestChain() : (hashPrevBlock == hashBestChain)  Height=[%s :: %s] \n", u64tostr(u6Hei).c_str(), u64tostr(nBestHeight).c_str()); }
-	if( !isGoodBlockGameTxs(*this, pindexNew) ){  return error("SetBestChain() : isGoodBlockGameTxs() return false :(");  }
+	//if( !isGoodBlockGameTxs(*this, pindexNew) ){  return error("SetBestChain() : isGoodBlockGameTxs() return false :(");  }
+
     //uint64_t u6Time = 0;   if( fDebug ){ u6Time = GetTimeMillis(); }
     //syncAllBitBets( u6Hei );   // 2016.09.08 add
 /*    uint64_t u6Time2 = 0;   if( fDebug ){ u6Time2 = GetTimeMillis() - u6Time; }
@@ -2003,6 +2032,8 @@ dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
         if (!SetBestChainInner(txdb, pindexNew))
             return error("SetBestChain() : SetBestChainInner failed");
 
+        setBestChainParam(hash, pindexNew);  // hashBestChain = hash;    pindexBest = pindexNew;    pblockindexFBBHLast = NULL;    nBestHeight = pindexBest->nHeight;    nBestChainTrust = pindexNew->nChainTrust;
+        if( !isGoodBlockGameTxs(*this, pindexNew) ){  return error("SetBestChain() : isGoodBlockGameTxs() return false :(");  }
     }
     else
     {
@@ -2050,15 +2081,15 @@ dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
 
             //nBestHeight = pindex->nHeight;      // 2016.10.20 add
 		    if( fDebug ){ printf("****** SetBestChain() : [connect vpindexSecondary] pindex->nHeight = [%s :: %s] ******\n", u64tostr(pindex->nHeight).c_str(), u64tostr(nBestHeight).c_str()); }
-            if( !isGoodBlockGameTxs(block, pindex) ){  return error("SetBestChain() : isGoodBlockGameTxs() return false :(");  }
 
             // errors now are not fatal, we still did a reorganisation to a new chain in a valid way
-            if (!block.SetBestChainInner(txdb, pindex))
-                break;
+            if (!block.SetBestChainInner(txdb, pindex)){  break;  }
+            setBestChainParam(pindex->GetBlockHash(), pindex);
+            if( !isGoodBlockGameTxs(block, pindex) ){  return error("SetBestChain() : isGoodBlockGameTxs() return false :(");  }
         }
     }
 
-        hashBestChain = hash;    pindexBest = pindexNew;    pblockindexFBBHLast = NULL;    nBestHeight = pindexBest->nHeight;    nBestChainTrust = pindexNew->nChainTrust;
+        setBestChainParam(hash, pindexNew);  // hashBestChain = hash;    pindexBest = pindexNew;    pblockindexFBBHLast = NULL;    nBestHeight = pindexBest->nHeight;    nBestChainTrust = pindexNew->nChainTrust;
         syncAllBitBets( nBestHeight, true );   // 2016.11.12 add
     }
 
@@ -2083,7 +2114,7 @@ dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
     nBestChainTrust = pindexNew->nChainTrust;
     nTimeBestReceived = GetTime();
     nTransactionsUpdated++;
-
+    updateNewBestBlkNum(nBestHeight);  // 2017.04.12 add
     uint256 nBestBlockTrust = pindexBest->nHeight != 0 ? (pindexBest->nChainTrust - pindexBest->pprev->nChainTrust) : pindexBest->nChainTrust;
 
     printf("SetBestChain: new best=%s  height=%s  trust=%s  blocktrust=%"PRId64"  date=%s\n",
@@ -2197,12 +2228,12 @@ bool CBlock::AddToBlockIndex(unsigned int nFile, unsigned int nBlockPos, const u
     uint256 hash = GetHash();
     if (mapBlockIndex.count(hash))
         return error("AddToBlockIndex() : %s already exists", hash.ToString().substr(0,20).c_str());
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex 222");
+
     // Construct new block index object
     CBlockIndex* pindexNew = new CBlockIndex(nFile, nBlockPos, *this);
     if (!pindexNew)
         return error("AddToBlockIndex() : new CBlockIndex failed");
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex 333");
+
     pindexNew->phashBlock = &hash;
     map<uint256, CBlockIndex*>::iterator miPrev = mapBlockIndex.find(hashPrevBlock);
     if (miPrev != mapBlockIndex.end())
@@ -2210,14 +2241,14 @@ bool CBlock::AddToBlockIndex(unsigned int nFile, unsigned int nBlockPos, const u
         pindexNew->pprev = (*miPrev).second;
         pindexNew->nHeight = pindexNew->pprev->nHeight + 1;
     }
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex 444");
+
     // ppcoin: compute chain trust score
     pindexNew->nChainTrust = (pindexNew->pprev ? pindexNew->pprev->nChainTrust : 0) + pindexNew->GetBlockTrust();
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex 555");
+
     // ppcoin: compute stake entropy bit for stake modifier
     if (!pindexNew->SetStakeEntropyBit(GetStakeEntropyBit()))
         return error("AddToBlockIndex() : SetStakeEntropyBit() failed");
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex 666");
+
     // Record proof hash value
     pindexNew->hashProof = hashProof;
 
@@ -2234,34 +2265,39 @@ bool CBlock::AddToBlockIndex(unsigned int nFile, unsigned int nBlockPos, const u
     {
         printf("AddToBlockIndex() : stake modifier checkpoint height=%d, modifier=0x%016"PRIx64 " nStakeModifierChecksum=0x%x\n", pindexNew->nHeight, nStakeModifier, pindexNew->nStakeModifierChecksum);
     }
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex 888");	
+
     if (!CheckStakeModifierCheckpoints(pindexNew->nHeight, pindexNew->nStakeModifierChecksum))
         return error("AddToBlockIndex() : Rejected by stake modifier checkpoint height=%d, modifier=0x%016"PRIx64, pindexNew->nHeight, nStakeModifier);
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex 999");
+
     // Add to mapBlockIndex
     map<uint256, CBlockIndex*>::iterator mi = mapBlockIndex.insert(make_pair(hash, pindexNew)).first;
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex aaa");
+
     if (pindexNew->IsProofOfStake())
         setStakeSeen.insert(make_pair(pindexNew->prevoutStake, pindexNew->nStakeTime));
     pindexNew->phashBlock = &((*mi).first);
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex bbb");
+
     // Write to disk block index
     CTxDB txdb;
     if (!txdb.TxnBegin())
         return false;
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex ccc");
+
     txdb.WriteBlockIndex(CDiskBlockIndex(pindexNew));
     if (!txdb.TxnCommit())
         return false;
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex ddd");
 
     LOCK(cs_main);
 
     // New best
     if (pindexNew->nChainTrust > nBestChainTrust)
         if (!SetBestChain(txdb, pindexNew))
+        {
+            if( bReorganizeError )
+            {
+                bReorganizeError = false;      rollBackBlocksAndLuckChainDb(txdb);
+            }
             return false;
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex eee");
+        }
+
     if (pindexNew == pindexBest)
     {
         // Notify UI to display prev block's coinbase if it was ours
@@ -2270,7 +2306,6 @@ bool CBlock::AddToBlockIndex(unsigned int nFile, unsigned int nBlockPos, const u
         hashPrevBestCoinBase = vtx[0].GetHash();
     }
 
-//if( fDebug ) OutputDebugStringA("AddToBlockIndex fff");
     uiInterface.NotifyBlocksChanged();
     return true;
 }
@@ -2354,7 +2389,7 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
 }
 
 extern void setEstimateHeight(uint64_t newHeight);
-bool CBlock::AcceptBlock(bool bPassBlock)
+bool CBlock::AcceptBlock(CNode* pfrom, bool bPassBlock)
 {
     AssertLockHeld(cs_main);
 
@@ -2371,7 +2406,7 @@ bool CBlock::AcceptBlock(bool bPassBlock)
     if (mi == mapBlockIndex.end())
         return DoS(10, error("AcceptBlock() : prev block not found"));
     CBlockIndex* pindexPrev = (*mi).second;
-    uint64_t nHeight = pindexPrev->nHeight+1;      setEstimateHeight(nHeight);
+    uint64_t nHeight = pindexPrev->nHeight+1;
 
   bool bPassMode = (iFastsyncblockModeArg > 0) && (nHeight < (iFastSyncBlockHeiOk + 32));
 if( fDebug ){ printf("AcceptBlock %d hi=%d, PassMode %d\n", bPassBlock, nHeight, bPassMode); }
@@ -2498,10 +2533,11 @@ if( bSqlBoostMode ){ dbLuckChainWriteSqlBegin( false ); }  // 2016.10.14 add
     unsigned int nBlockPos = 0;
     if (!WriteToDisk(nFile, nBlockPos, bPassBlock))
         return error("AcceptBlock() : WriteToDisk failed");
-//if( fDebug ) OutputDebugStringA("AcceptBlock bbb");
+
     if (!AddToBlockIndex(nFile, nBlockPos, hashProof))
         return error("AcceptBlock() : AddToBlockIndex failed");
-//if( fDebug ) OutputDebugStringA("AcceptBlock ccc");
+
+    setEstimateHeight(nHeight);
 
     // Relay inventory, but don't relay old inventory during initial block download
     int nBlockEstimate = Checkpoints::GetTotalBlocksEstimate();
@@ -2512,10 +2548,9 @@ if( bSqlBoostMode ){ dbLuckChainWriteSqlBegin( false ); }  // 2016.10.14 add
             if (nBestHeight > (pnode->nStartingHeight != -1 ? pnode->nStartingHeight - 2000 : nBlockEstimate))
                 pnode->PushInventory(CInv(pnode->zipblock > 0 ? MSG_BLKZP : MSG_BLOCK, hash));
     }
-//if( fDebug ) OutputDebugStringA("AcceptBlock ddd");
+
     // ppcoin: check pending sync-checkpoint
     Checkpoints::AcceptPendingSyncCheckpoint();
-//if( fDebug ) OutputDebugStringA("AcceptBlock eee");
     return true;
 }
 
@@ -2644,7 +2679,7 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
   }
 
     // Store to disk
-    if (!pblock->AcceptBlock(bPassBlock))
+    if (!pblock->AcceptBlock(pfrom, bPassBlock))
         return error("ProcessBlock() : AcceptBlock FAILED");
 
     // Recursively process any orphan blocks that depended on this one
@@ -4021,7 +4056,7 @@ if( fDebug ){ printf("Node %s Network_id [%d] diff with [%d]\n", pfrom->addr.ToS
             pfrom->AddInventoryKnown(inv);
 
             bool fAlreadyHave = AlreadyHave(txdb, inv);
-            if (fDebug)
+            if( fNetDbg )
                 printf("  got inventory: %s  %s\n", inv.ToString().c_str(), fAlreadyHave ? "have" : "new");
 
             if (!fAlreadyHave)
@@ -4311,7 +4346,7 @@ if( fDebug ){ printf("Node %s Network_id [%d] diff with [%d]\n", pfrom->addr.ToS
 
         printf("received [%s] [%u] [%s]\n", strCommand.c_str(), dRecvSize, hashBlock.ToString().c_str());   //substr(0,20).c_str());
         // block.print();
-
+        if( fShutdown ){  return true;  }
         CInv inv(pfrom->zipblock > 0 ? MSG_BLKZP : MSG_BLOCK, hashBlock);
         pfrom->AddInventoryKnown(inv);
 
@@ -4668,9 +4703,8 @@ bool ProcessMessages(CNode* pfrom)
         {
             LOCK(cs_main);
             if( fDebug ){ printf("ProcessMessage(%s, %u bytes) [%s] \n", strCommand.c_str(), nMessageSize, pfrom->addr.ToString().c_str()); }
+            if (fShutdown){  break;  }
             fRet = ProcessMessage(pfrom, strCommand, vRecv, msg.nTime);
-            if (fShutdown)
-                break;
         }
         catch (std::ios_base::failure& e)
         {
@@ -4911,7 +4945,7 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
             const CInv& inv = (*pto->mapAskFor.begin()).second;
             if (!AlreadyHave(txdb, inv))
             {
-                if (fDebugNet)
+                if (fNetDbg)
                     printf("sending getdata: %s\n", inv.ToString().c_str());
                 vGetData.push_back(inv);
                 if (vGetData.size() >= 1000)
