@@ -43,6 +43,7 @@ static std::map<int, unsigned int> mapStakeModifierCheckpoints =
         ( 250000, 0x973d71a1 )
         ( 260000, 0xc79d4af5 )
         ( 270000, 0x575e68da )
+        ( 292293, 0x8a8a83e9 )
     ;
 
 // Hard checkpoints of stake modifiers to ensure they are deterministic (testNet)
@@ -514,10 +515,10 @@ bool CheckProofOfStake(CBlockIndex* pindexPrev, const CTransaction& tx, unsigned
     if (!txPrev.ReadFromDisk(txdb, txin.prevout, txindex))
     {
         if( fDebug ){ printf("CheckProofOfStake() : read txPrev failed, txin.prevout =[%u], [%s] \n", txin.prevout.n, txin.prevout.hash.ToString().c_str()); }
-        if( GetBlockByTxHash(txin.prevout.hash, block, txPrev) )
+        /*if( GetBlockByTxHash(txin.prevout.hash, block, txPrev) )
         {
             bGotBlock = true;      goto Check02; // return true;
-        }
+        }*/
         return tx.DoS(1, error("CheckProofOfStake() : INFO: read txPrev failed"));  // previous transaction not in main chain, may occur during initial download
     }
 Check02:

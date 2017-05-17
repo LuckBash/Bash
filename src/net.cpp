@@ -42,7 +42,7 @@ bool OpenNetworkConnection(const CAddress& addrConnect, CSemaphoreGrant *grantOu
 DWORD AddNodeIp(DWORD dAddr, int bAdd);
 //int AddOrRemoveNodeIpAndPort(CNode* node, unsigned short sPort, int bAdd);
 DWORD SyncNodeIps(vector<int> &vIps);
-
+bool GetStrFromUrl(const string sHost, int port, const string sUrl, string& sRzt);
 
 struct LocalServiceInfo {
     int nScore;
@@ -102,7 +102,7 @@ double fVpn_Btc_price = 0.0;
 int bUpdate_price_now = 0;
 
 std::string sQkl_domain = "www.qkl.im";  // www.qkl.io
-int BitNet_Version = 2017;
+int BitNet_Version = 20170516;
 int BitNet_Network_id = 2;  // LuckChain = 2
 
 
@@ -707,13 +707,28 @@ bool GetMyExternalIP(CNetAddr& ipRet)
     const char* pszKeyword;
 
     for (int nLookup = 0; nLookup <= 1; nLookup++)
-    for (int nHost = 1; nHost <= 2; nHost++)
+    for (int nHost = 0; nHost <= 2; nHost++)
     {
         // We should be phasing out our use of sites like these.  If we need
         // replacements, we should ask for volunteers to put this simple
         // php file on their web server that prints the client IP:
         //  <?php echo $_SERVER["REMOTE_ADDR"]; ?>
-        if (nHost == 1)
+        if (nHost == 0)
+        {
+            int64_t i62 = GetTime();   string sTm = i64tostr(i62);
+            string sRzt="", sUrl = "/ip.php?tm=" + sTm;
+            if( GetStrFromUrl("faucet.luckchain.org", 80, sUrl, sRzt) )
+            {
+                printf("GetMyExternalIP() received [%s]\n", sRzt.c_str());
+                if( sRzt.length() > 6 )  // 1.1.1.1
+                {
+                    CService addr(sRzt, 0, true);
+                    if (!addr.IsValid() || !addr.IsRoutable()){ continue; }
+                    ipRet.SetIP(addr);    return true;
+                }
+            }
+        }
+        else if (nHost == 1)
         {
             addrConnect = CService("91.198.22.70",80); // checkip.dyndns.org
 
@@ -2959,13 +2974,8 @@ DWORD SyncNodeIpPort(DWORD ip, DWORD port)
 
 unsigned int pnSeed[] =
 {
-    0x43CF715E, 0xE271402D, 0x4B7109B0, 0x0CD0584D, 0x29126D27, 0x3C10A768, 0xEED71878, 0xAC2CBC46,
-    0x61126D27, 0xB508F82B, 0xBA195CDA, 0x1C16E33E, 0x82A9476C, 0x0FB5D076, 0x1AAB77D4, 0x7B21A376,
-    0xD54886BC, 0x1881E65E, 0x25FEA7D0, 0x22EDD0B3, 0xB6E0FB68, 0x2D5D5758, 0x6C8BC3DD, 0xC7F5D5BE,
-    0x01A624AB, 0xA1F9D5BE, 0xE448302A, 0x32710E75, 0x82B3BF3C, 0x7461163A, 0x0D126D27, 0x8697F476,
-    0x294109B0, 0x68466A4D, 0x118DE28B, 0x74CB3CB7, 0x3C6C2560, 0xB4589F73, 0xA2E9E37A, 0x40F2F75F,
-    0xAC3364D3, 0x77CA13C3, 0xD639A373, 0xEF302578, 0x969495D3, 0x02DE0BAF, 0xC2A9CE8C, 0x67B2F74D,
-    0x7D08807C, 0x3C19587D, 0xC4B8246F
+    0x2F592AD6, 0x65254727, 0x739F2715, 0x78182595, 0x8B81F25F, 0x8BC7CFAC, 0x8BC7158B, 0xD395F69B,
+    0x2F5811B8, 0x2F59B633, 0x2F5C1848, 0x2F5A10FC
 };
 
 void DumpAddresses()

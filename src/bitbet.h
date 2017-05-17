@@ -112,7 +112,7 @@ struct dbBitBetTotalAmountAndWinnerPack{
 #define BitBet_Standard_Confirms 10
 #define BitBet_Lucky_Lotto_ReBet_Confirms 20
 #define BitBet_MAX_Confirms 60
-#define BitBet_Real_Event_Confirms 36 * 60
+#define BitBet_Real_Event_Confirms 24 * 60  // 36 hour, 2017.05.16 change to 24 hour
 #define MAX_BitBet_Str_Param_Len 1024
 #define OneResultPack_U64_TYPE  1
 #define OneResultPack_STR_TYPE 2
@@ -120,8 +120,8 @@ struct dbBitBetTotalAmountAndWinnerPack{
 #define Referees_fee_idx 4
 #define Referees_maxcoins_idx 5
 
-#define MAX_USER_INVEST_COINS 10000000
-#define MAX_LUCK16_INVEST_COINS 100000
+#define MAX_USER_INVEST_COINS 5000000
+#define MAX_LUCK16_INVEST_COINS 2000
 
 #define AllBets_id_idx 0
 #define AllBets_opcode_idx 1
@@ -213,7 +213,8 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern int  GetTxOutBurnedCoins(const std::vector<CTxOut> &vout, int64_t& u6Rzt, bool bZeroFirt);
 	extern std::string signMessageAndRztNotInclude(const string strAddress, const string strMessage, const string sAnti);
 	extern std::string getLucky16MultiBetNums(int iStart, int iCount);
-	extern uint64_t getAliveLaunchBetCount( sqlite3 *dbOne, std::string sBettor, bool bJustRcvTx );
+    extern uint64_t getAliveLaunchBetCountCore( sqlite3 *dbOne, const std::string sBettor, bool bJustRcvTx, int iOpCode=1, int iBetType=-1, bool bOnlyJustRcvTx=false );
+	extern uint64_t getAliveLaunchBetCount( sqlite3 *dbOne, const std::string sBettor, bool bJustRcvTx );
 	extern void notifyReceiveNewBlockMsg(uint64_t nHeight, uint64_t nTime);
 	extern bool isDuplicatesBossNums( const string sBetNum );
 	extern int GetOxCard(const string sCardData);

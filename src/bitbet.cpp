@@ -41,7 +41,7 @@ const std::string BitBet_CMD_Magic("BitBetCMD:");
 const string BitBetBurnAddress = "B4T5ciTCkWauSqVAcVKy88ofjcSasUkSYU";
 const string strBitNetLotteryMagic = "BitLottery:";
 const int BitBetBeginEndBlockSpace_10 = 10;
-const int64_t BitBet_Mini_Amount = 100;  //MIN_TXOUT_AMOUNT;   // 100 * COIN
+const int64_t BitBet_Mini_Amount = 10;  //MIN_TXOUT_AMOUNT;   // 100 * COIN
 const int64_t  Balanced_Mining_Amount = 5000000 * COIN;
 const int iBitNetBlockMargin3 = 3;
 const int BitNetBeginAndEndBlockMargin_Mini_30 = 10;
@@ -1056,7 +1056,27 @@ int getRunSqlResultCount(sqlite3 *dbOne, const string sql, uint64_t &rzt)
 {
    return sqlite3_exec(dbOne, sql.c_str(), selectCountCallback, (void*)&rzt, NULL);
 }
-uint64_t getAliveLaunchBetCount( sqlite3 *dbOne, string sBettor, bool bJustRcvTx )
+uint64_t getAliveLaunchBetCountCore( sqlite3 *dbOne, const std::string sBettor, bool bJustRcvTx, int iOpCode, int iBetType, bool bOnlyJustRcvTx )
+{
+   uint64_t rzt = 0;
+   string sql = "SELECT Count(*) from AllBets where opcode=" + inttostr(iOpCode) + " and done=0";
+   if( iBetType >= 0 ){ sql = sql + " and bet_type=" + inttostr(iBetType); }
+   if( sBettor.length() < 33 ){ sql = sql + ";"; }
+   else{ sql = sql + " and bettor='" + sBettor + "';"; }
+   int rc=0;
+   if( !bOnlyJustRcvTx )
+   {
+	   rc = sqlite3_exec(dbOne, sql.c_str(), selectCountCallback, (void*)&rzt, NULL);
+   }
+	if( bJustRcvTx )  // 2016.12.18 add
+	{
+		boost::replace_first(sql, "AllBets", "AllBetsTmp");      uint64_t u6zt = 0;
+		rc = sqlite3_exec(dbOne, sql.c_str(), selectCountCallback, (void*)&u6zt, NULL);
+		if( rc == SQLITE_OK ){  rzt = rzt + u6zt;  }
+	}
+   return rzt;
+}
+uint64_t getAliveLaunchBetCount( sqlite3 *dbOne, const string sBettor, bool bJustRcvTx )
 {
    uint64_t rzt = 0;
    string sql = "SELECT Count(*) from AllBets where opcode=1 and done=0";
@@ -3114,7 +3134,7 @@ bool isValidBitBetEncashTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack &
 bool insertBitBetTx(const CTransaction tx, BitBetPack &bbp, uint64_t iTxHei, const string sTableName = "AllBets")
 {
    bool rzt = false;
-   if( !isBetTxExists(bbp.tx, sTableName) )
+   if( !isBetTxExists(bbp.tx) )
    {
       bbp.u6Time = tx.nTime;
       if( bbp.opCode == 1 )  // Launch bet
