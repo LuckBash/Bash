@@ -327,6 +327,9 @@ static const CRPCCommand vRPCCommands[] =
     { "testtxmsg",		    &testtxmsg,    	 true,      false },
     { "bitbetcmd",		    &bitbetcmd,    	 true,      false },
     { "checkoxcard",		    &checkoxcard,    	 true,      false },
+    { "regqueuenode",		    &regqueuenode,    	 true,      false },
+    { "unlockqueuenode",		    &unlockqueuenode,    	 true,      false },
+    { "getqueuenodelist",		    &getqueuenodelist,    	 true,      false },
 };
 
 CRPCTable::CRPCTable()
@@ -1289,6 +1292,7 @@ Array RPCConvertValues(const std::string &strMethod, const std::vector<std::stri
 	}
     if (strMethod == "rollbackto"             && n > 0) ConvertTo<boost::int64_t>(params[0]);
     if (strMethod == "rollbackblocks"         && n > 0) ConvertTo<boost::int64_t>(params[0]);
+    if (strMethod == "regqueuenode"             && n > 2) ConvertTo<boost::int64_t>(params[2]);
     return params;
 }
 

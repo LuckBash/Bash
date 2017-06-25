@@ -1191,6 +1191,10 @@ void SetMockTime(int64_t nMockTimeIn)
 }
 
 static int64_t nTimeOffset = 0;
+void SetTimeOffset(int64_t nTimeIn)
+{
+    nTimeOffset = nTimeIn;
+}
 
 int64_t GetTimeOffset()
 {

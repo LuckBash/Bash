@@ -66,7 +66,9 @@ static const unsigned int LOCKTIME_THRESHOLD = 500000000; // Tue Nov  5 00:53:20
 
 static const int64_t COIN_YEAR_REWARD = 1 * CENT; // 1% per year
 const int NewTxFee_RewardCoinYear_Active_Height = 0;  // 2015.09.15 add
-const int64_t MIN_STAKE_TX_AMOUNT = 10000 * COIN;  // 2015.10.01 add
+extern const int64_t MIN_STAKE_TX_AMOUNT;
+extern const int64_t MIN_Queue_Node_AMOUNT;
+extern const string strRegisterAsNodeMagic;
 
 inline unsigned int max_BLOCK_SIZE(int64_t nHeight) { 
     if( nHeight >= NewTxFee_RewardCoinYear_Active_Height ){ return MAX_BLOCK_SIZE; }
@@ -98,13 +100,6 @@ extern const int64_t f20161111_NewTxFee_Active_Height;  // 2016.11.11 add
 extern const int64_t MIN_TX_FEE_old;
 extern const int64_t New_MIN_TX_FEE;
 
-inline uint64_t getMIN_TX_FEE(int64_t nHeight) { 
-    if( nHeight >= f20161111_NewTxFee_Active_Height ){ return New_MIN_TX_FEE; }
-	else return MIN_TX_FEE_old;
-}
-inline uint64_t getMIN_RELAY_TX_FEE(int64_t nHeight) {  return getMIN_TX_FEE(nHeight);  }
-inline uint64_t getMIN_TXOUT_AMOUNT(int64_t nHeight) {  return getMIN_TX_FEE(nHeight);  }
-
 
 extern int bitnet_pack_block(CBlock* block, string& sRzt);
 extern bool getCBlockByFilePos(const CAutoFile& filein, unsigned int nBlockPos, CBlock* block);
@@ -112,8 +107,8 @@ extern bool getCBlocksTxByFilePos(const CAutoFile& filein, unsigned int nBlockPo
 extern int dw_zip_block;
 
 
-static const uint256 hashGenesisBlock("0x00000bc87d0385e25417c877e00e959087e8eebbf76722dfcff9e76da7cbf3ea");
-static const uint256 hashGenesisBlockTestNet("0x0000097d092eafac7d6e13e50d511d8e21ffa2f2d382e8449d25521807deec29");
+extern const uint256 hashGenesisBlock;
+extern const uint256 hashGenesisBlockTestNet;
 
 
 inline bool IsProtocolV2(uint64_t nHeight) { return nHeight > 0; }	//inline bool IsProtocolV2(int nHeight) { return nHeight > 319000; }
@@ -121,7 +116,40 @@ inline bool IsProtocolV2(uint64_t nHeight) { return nHeight > 0; }	//inline bool
 inline int64_t PastDrift(int64_t nTime, int64_t nHeight)   { return IsProtocolV2(nHeight) ? nTime      : nTime - 10 * 60; }
 inline int64_t FutureDrift(int64_t nTime, int64_t nHeight) { return IsProtocolV2(nHeight) ? nTime + 15 : nTime + 10 * 60; }
 
-inline unsigned int GetTargetSpacing(int64_t nHeight) { return IsProtocolV2(nHeight) ? 64 : 60; }
+extern CBigNum bnProofOfStakeLimit;
+extern CBigNum bnProofOfStakeLimitV2;
+extern CBigNum bnProofOfWorkLimitTestNet;
+extern CBigNum bnQueueMiningProofOfStakeLimit;
+extern const int Queue_Node_Block_Min_Interval;  // 50
+extern const int Queue_Node_Block_Max_Interval; // 120
+extern const volatile int64_t Queue_PoS_Rules_Acitve_Height;
+extern const int64_t Queue_PoS_Rules_Acitve_Height_Test;
+extern const int64_t Queue_Node_Actived_MIN_TX_FEE;
+extern const volatile int64_t Accept_Register_QPoS_Node_Height;
+extern const int64_t Accept_Register_QPoS_Node_Height_Test;
+
+inline bool AcceptRegisterQueuePoSNode(int64_t nHeight)
+{
+    int64_t nAcceptHeight = (fTestNet ? Accept_Register_QPoS_Node_Height_Test : Accept_Register_QPoS_Node_Height);  // 10 : 345000
+	return (nHeight >= nAcceptHeight);
+}
+inline bool Is_Queue_PoS_Rules_Acitved(int64_t nHeight)
+{
+    int64_t nHeiRules = (fTestNet ? Queue_PoS_Rules_Acitve_Height_Test : Queue_PoS_Rules_Acitve_Height);
+	return (nHeight >= nHeiRules);
+}
+inline unsigned int GetTargetSpacing(int64_t nHeight)
+{
+    if( Is_Queue_PoS_Rules_Acitved(nHeight) ){ return 60; }
+    else return IsProtocolV2(nHeight) ? 64 : 60;
+}
+inline uint64_t getMIN_TX_FEE(int64_t nHeight) { 
+    if( Is_Queue_PoS_Rules_Acitved(nHeight) ){ return Queue_Node_Actived_MIN_TX_FEE; }
+	else if( nHeight >= f20161111_NewTxFee_Active_Height ){ return New_MIN_TX_FEE; }
+	else return MIN_TX_FEE_old;
+}
+inline uint64_t getMIN_RELAY_TX_FEE(int64_t nHeight) {  return getMIN_TX_FEE(nHeight);  }
+inline uint64_t getMIN_TXOUT_AMOUNT(int64_t nHeight) {  return getMIN_TX_FEE(nHeight);  }
 
 extern libzerocoin::Params* ZCParams;
 extern CScript COINBASE_FLAGS;
@@ -148,6 +176,18 @@ extern CCriticalSection cs_setpwalletRegistered;
 extern std::set<CWallet*> setpwalletRegistered;
 extern unsigned char pchMessageStart[4];
 extern std::map<uint256, CBlock*> mapOrphanBlocks;
+
+extern unsigned int nNodeQueueMiningRulesStakeMinAge;
+extern int nNodeQueueMiningRulesCoinbaseMaturity;
+inline unsigned int Get_nStakeMinAge(int64_t nHeight)
+{
+    return Is_Queue_PoS_Rules_Acitved(nHeight) ? nNodeQueueMiningRulesStakeMinAge : nStakeMinAge;
+}
+
+inline unsigned int Get_nCoinbaseMaturity(int64_t nHeight)
+{
+    return Is_Queue_PoS_Rules_Acitved(nHeight) ? nNodeQueueMiningRulesCoinbaseMaturity : nCoinbaseMaturity;
+}
 
 // Settings
 extern int64_t nTransactionFee;
@@ -181,7 +221,7 @@ bool LoadExternalBlockFile(FILE* fileIn);
 bool CheckProofOfWork(uint256 hash, unsigned int nBits);
 unsigned int GetNextTargetRequired(const CBlockIndex* pindexLast, bool fProofOfStake);
 int64_t GetProofOfWorkReward(int64_t nFees);
-int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees);
+int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees, const std::string sMinerAddr);
 unsigned int ComputeMinWork(unsigned int nBase, int64_t nTime);
 unsigned int ComputeMinStake(unsigned int nBase, int64_t nTime, unsigned int nBlockTime);
 int GetNumBlocksOfPeers();
@@ -1119,13 +1159,14 @@ public:
 
     void print() const
     {
-        printf("CBlock(hash=%s, ver=%d, hashPrevBlock=%s, hashMerkleRoot=%s, nTime=%u, nBits=%08x, nNonce=%u, vtx=%"PRIszu", vchBlockSig=%s)\n",
+        printf("CBlock(hash=%s, ver=%d, hashPrevBlock=%s, hashMerkleRoot=%s, nTime=%u, nBits=%08x, nNonce=%u, vtx=%"PRIszu", blockData=%s, vchBlockSig=%s)\n",
             GetHash().ToString().c_str(),
             nVersion,
             hashPrevBlock.ToString().c_str(),
             hashMerkleRoot.ToString().c_str(),
             nTime, nBits, nNonce,
             vtx.size(),
+            blockData.c_str(),
             HexStr(vchBlockSig.begin(), vchBlockSig.end()).c_str());
         for (unsigned int i = 0; i < vtx.size(); i++)
         {

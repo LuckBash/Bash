@@ -225,6 +225,7 @@ HEADERS += src/qt/bitcoingui.h \
     src/bitchain.h \
     src/init.h \
     src/irc.h \
+    src/ntp.h \
     src/lz4/lz4.h \
     src/lzma/Alloc.h \
     src/lzma/LzFind.h \
@@ -286,6 +287,7 @@ HEADERS += src/qt/bitcoingui.h \
     src/qt/multisigdialog.h \
     src/qt/multisiginputentry.h \
     src/qt/flowlayout.h \
+    src/qt/queuenodespage.h \
     src/allocators.h \
     src/ui_interface.h \
     src/qt/rpcconsole.h \
@@ -320,6 +322,7 @@ SOURCES += src/qt/bitcoin.cpp src/qt/bitcoingui.cpp \
     src/init.cpp \
     src/net.cpp \
     src/irc.cpp \
+    src/ntp.cpp \
     src/bitbet.cpp \
     src/lz4/lz4.c \
     src/lzma/7zAlloc.c \
@@ -380,6 +383,7 @@ SOURCES += src/qt/bitcoin.cpp src/qt/bitcoingui.cpp \
     src/qt/multisigdialog.cpp \
     src/qt/multisiginputentry.cpp \
     src/qt/flowlayout.cpp \
+    src/qt/queuenodespage.cpp \
     src/noui.cpp \
     src/kernel.cpp \
     src/scrypt-arm.S \
@@ -425,6 +429,7 @@ FORMS += \
     src/qt/forms/betentry.ui \
     src/qt/forms/betitementry.ui \
     src/qt/forms/refereeentry.ui \
+    src/qt/forms/queuenodespage.ui \
     src/qt/forms/optionsdialog.ui
 
 HEADERS += src/qt/forms/mainframe.h

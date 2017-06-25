@@ -17,6 +17,7 @@ using namespace std;
 //
 
 extern unsigned int nMinerSleep;
+extern bool bTimeSyncedFromNtpServer;
 bool bMiner_SyncBlockChain = false,  bNormalMinerWeight=true;
 uint64_t nEstimateHeight=0;
 
@@ -126,10 +127,13 @@ CBlock* CreateNewBlock(CWallet* pwallet, bool fProofOfStake, int64_t* pFees)
         return NULL;
 
     CBlockIndex* pindexPrev = pindexBest;
-    int nHeight = pindexPrev->nHeight + 1;
+    int64_t nHeight = pindexPrev->nHeight + 1;
 
     if (!IsProtocolV2(nHeight))
         pblock->nVersion = 6;
+
+    bool bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nHeight);
+    if( bQPoS_Rules_Actived ){ pblock->blockData = i64tostr(nHeight); }
 
     // Create coinbase tx
     CTransaction txNew;
@@ -403,8 +407,8 @@ CBlock* CreateNewBlock(CWallet* pwallet, bool fProofOfStake, int64_t* pFees)
         pblock->hashPrevBlock  = pindexPrev->GetBlockHash();
         pblock->nTime          = max(pindexPrev->GetPastTimeLimit()+1, pblock->GetMaxTransactionTime());
         pblock->nTime          = max(pblock->GetBlockTime(), PastDrift(pindexPrev->GetBlockTime(), nHeight));
-        if (!fProofOfStake)
-            pblock->UpdateTime(pindexPrev);
+        if( !fProofOfStake ){ pblock->UpdateTime(pindexPrev); }
+        else if( bQPoS_Rules_Actived ){ pblock->nTime = GetAdjustedTime(); }
         pblock->nNonce         = 0;
     }
 
@@ -567,7 +571,8 @@ void StakeMiner(CWallet *pwallet)
     // Make this thread recognisable as the mining thread
     RenameThread("luckchain-miner");
 
-    bool fTryToSync = true;
+    bool fTryToSync = true,  bIgnoreBlocksOfPeers = GetBoolArg("-minerignoreblkofpeers", false);
+    int iQPoSMiniConnects = GetArg("-qposminiconnects", (fTestNet ? 3 : 5));
 
     while (true)
     {
@@ -594,21 +599,26 @@ void StakeMiner(CWallet *pwallet)
         if (fTryToSync)
         {
             fTryToSync = false;
-            if (vNodes.size() < 3 || nBestHeight < GetNumBlocksOfPeers())
+            if (GetNumConnections() < 1 || nBestHeight < GetNumBlocksOfPeers())
             {
                 MilliSleep(60000);
                 continue;
             }
         }
-        balancedMining();
-		if( !bNormalMinerWeight )
+
+        bool bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nBestHeight + 1);
+        if( !bQPoS_Rules_Actived )
         {
-            for(int i=0; i<600; i++)
+            balancedMining();
+            if( !bNormalMinerWeight )
             {
-                MilliSleep(1000);
-                if (fShutdown){  return;  }
+                for(int i=0; i<600; i++)
+                {
+                    MilliSleep(1000);
+                    if (fShutdown){  return;  }
+                }
+                return;
             }
-            return;
         }
 
         //
@@ -616,26 +626,58 @@ void StakeMiner(CWallet *pwallet)
         //
         int64_t nFees;
         auto_ptr<CBlock> pblock(CreateNewBlock(pwallet, true, &nFees));
+        if( !pblock.get() ){ return; }
+
+        bool bOk = true;
+        if( bQPoS_Rules_Actived )
+	    {
+            int iMinNodeCount = iQPoSMiniConnects;      bool bNeedSync = false;
+			if( bSystemNodeWallet )
+			{
+				bNeedSync = nBestHeight < GetNumBlocksOfPeers();  // iMinNodeCount = iQPoSMiniConnects;
+				if( bNeedSync && bIgnoreBlocksOfPeers ){ bNeedSync = false; }
+			}
+			if( (GetNumConnections() < iMinNodeCount) || bNeedSync )
+            {
+                for(int i=0; i<30; i++)
+                {
+                    MilliSleep(500);
+                    if (fShutdown){  return;  }
+                }
+                continue;
+            }
+
+	    	if( !isTheRightMiningTime() ){ bOk = false; }
+		    else
+    		{
+	    		if( !ImTheCurrentQueueMiner() ){ bOk = false; }
+				else{
+				int64_t blkHeight = strToInt64(pblock->blockData.c_str());
+		    	CBlockIndex* pindexPrev = pindexBest;
+			    int64_t nHeight = pindexPrev->nHeight + 1,  blkTm = pblock->GetBlockTime(),  prevBlkTm = pindexPrev->GetBlockTime();
+			    int64_t blkSpace = blkTm - prevBlkTm,  tmNow = GetAdjustedTime();
+			    bOk = (nHeight == blkHeight) && (blkSpace >= Queue_Node_Block_Min_Interval);  // 59
+				/*if( bOk )
+				{
+					blkSpace = tmNow - prevBlkTm;
+				}*/
+			    }
+		    }
+    	}
 #ifdef WIN32
         std::string sHash = pblock->GetHash().ToString();
-        if( GetArg("-printminerinfo", 0) ){ printf("StakeMiner : SyncBlockChain=[%d], pblock.Hash()=[%s] nFees=[%I64u] \n", bMiner_SyncBlockChain, sHash.c_str(), nFees / COIN); }
+        if( GetArg("-printminerinfo", 0) ){ printf("StakeMiner : bOk=[%d], bTimeSyncedFromNtpServer=[%d], SyncBlockChain=[%d], pblock.Hash()=[%s] nFees=[%I64u] \n", bOk, bTimeSyncedFromNtpServer, bMiner_SyncBlockChain, sHash.c_str(), nFees / COIN); }
 #endif
-        if (!pblock.get())
-            return;
 
         // Trying to sign a block
-        if( (!bMiner_SyncBlockChain) && (pblock->SignBlock(*pwallet, nFees)) )
+        if( bOk && bTimeSyncedFromNtpServer && pblock->SignBlock(*pwallet, nFees) )  //if( (!bMiner_SyncBlockChain) && (pblock->SignBlock(*pwallet, nFees)) )
         {
             SetThreadPriority(THREAD_PRIORITY_NORMAL);
             CheckStake(pblock.get(), *pwallet);
             SetThreadPriority(THREAD_PRIORITY_LOWEST);
-            balancedMining();
+            if( !bQPoS_Rules_Actived ){ balancedMining(); }
         }
-        else{
-#ifdef WIN32
-            //if( fDebug ){ printf("StakeMiner : pblock(%s)->SignBlock(...) false \n", sHash.c_str()); }
-#endif
-            MilliSleep(nMinerSleep);
-		}
+		MilliSleep(nMinerSleep);
+        if( bQPoS_Rules_Actived ){ MilliSleep(1000); }
     }
 }

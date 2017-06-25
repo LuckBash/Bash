@@ -101,6 +101,7 @@ string AccountFromValue(const Value& value)
     return strAccount;
 }
 
+extern bool bTimeSyncedFromNtpServer;
 Value getinfo(const Array& params, bool fHelp)
 {
     if (fHelp || params.size() != 0)
@@ -121,9 +122,15 @@ Value getinfo(const Array& params, bool fHelp)
     obj.push_back(Pair("blocks",        nBestHeight));
     obj.push_back(Pair("blockchain-compression",        (bool)dw_zip_block));
     obj.push_back(Pair("timeoffset",    (int64_t)GetTimeOffset()));
-    int64_t mn = pindexBest->nMoneySupply - pindexBest->nMoneyBurned;
+    int64_t mBurnedCoin = 0;  //pindexBest->nMoneyBurned;
+    if( !fTestNet )
+    {
+        if( nBestHeight >= 96466 ){ mBurnedCoin = mBurnedCoin + (87536921.07442170 * COIN); }  // Yobit burned 87536921.07442170 BASH
+        if( nBestHeight >= 222484 ){ mBurnedCoin = mBurnedCoin + (259000000 * COIN); }  // burned 259,000,000 BASH
+    }
+    int64_t mn = pindexBest->nMoneySupply - mBurnedCoin;
     obj.push_back(Pair("moneysupply", ValueFromAmount(mn)));
-    obj.push_back(Pair("moneyburned", ValueFromAmount(pindexBest->nMoneyBurned)));
+    obj.push_back(Pair("moneyburned", ValueFromAmount(mBurnedCoin)));
     obj.push_back(Pair("connections",   (int)vNodes.size()));
     obj.push_back(Pair("proxy",         (proxy.first.IsValid() ? proxy.first.ToStringIPPort() : string())));
     obj.push_back(Pair("ip",            addrSeenByPeer.ToStringIP()));
@@ -140,6 +147,13 @@ Value getinfo(const Array& params, bool fHelp)
     if (pwalletMain->IsCrypted())
         obj.push_back(Pair("unlocked_until", (int64_t)nWalletUnlockTime / 1000));
     obj.push_back(Pair("errors",        GetWarnings("statusbar")));
+    bool bQPoS_Actived = Is_Queue_PoS_Rules_Acitved(nBestHeight);
+    obj.push_back(Pair("qpos",       bQPoS_Actived));
+    //if( bQPoS_Actived )
+    {
+        obj.push_back(Pair("timesynced",      bTimeSyncedFromNtpServer));
+        obj.push_back(Pair("time",      (int64_t)GetAdjustedTime()));
+    }
     return obj;
 }
 
@@ -2194,7 +2208,7 @@ string signMessage(const string strAddress, const string strMessage)
     if( !pwalletMain ) return rzt;
 
     //EnsureWalletIsUnlocked();
-	if( (pwalletMain->IsLocked()) || (fWalletUnlockStakingOnly) ){ return rzt; }
+	if( pwalletMain->IsLocked() ){ return rzt; }  //if( (pwalletMain->IsLocked()) || (fWalletUnlockStakingOnly) ){ return rzt; }
 
     CBitcoinAddress addr(strAddress);
     if( addr.IsValid() )
@@ -2226,7 +2240,7 @@ int signMessageWithoutBase64(const string strAddress, const string strMessage, s
     if( !pwalletMain ) return rzt;
 
     //EnsureWalletIsUnlocked();
-	if( (pwalletMain->IsLocked()) || (fWalletUnlockStakingOnly) ){ return rzt; }
+	if( pwalletMain->IsLocked() ){ return rzt; }
 
     CBitcoinAddress addr(strAddress);
     if( addr.IsValid() )
@@ -3636,12 +3650,6 @@ bool isRejectTransaction(const CTransaction& tx, uint64_t iTxHei)
 	string sCashTxHash = tx.GetHash().ToString();
 	if( fDebug ){ printf("\n\n\n******************** begin [%s]\n", sCashTxHash.c_str()); }
 
-	if( sCashTxHash == "5eca1af09202d447e0c9f1c0109ed611c8d7dbf40b91d554237562de76a92e04" )   // 2016.10.20 add
-	{
-		if( fDebug ){ printf(" isRejectTransaction [%s] ban. !!! \n", sCashTxHash.c_str()); }
-		return rzt;
-	}
-
 	uint64_t iCashTxHei = iTxHei;  //GetTransactionBlockHeight(sCashTxHash);
 	if( iCashTxHei == 0 )
 	{ 
@@ -4975,4 +4983,111 @@ Value checkoxcard(const Array& params, bool fHelp)
 	int b = GetOxCardFromBlock(i6BlockNumb, sBetNums, sRztCardData);  //GetOxCard(sAddr);
 	ret.push_back( Pair("RztCardData", sRztCardData) );      ret.push_back( Pair("result", b) );
     return ret;
+}
+
+Value regqueuenode(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() < 3)
+	{
+		throw runtime_error(
+            "regqueuenode <miner address> <nickname> <lock coin days>\n");
+	}
+    if( !AcceptRegisterQueuePoSNode(nBestHeight) )
+	{
+		string sErr = strprintf("Please wait until block height equ or big than %d\n", Accept_Register_QPoS_Node_Height);    throw runtime_error(sErr);
+	}
+	string sAddr = params[0].get_str(), sNick = params[1].get_str();   int iLockDays = params[2].get_int();
+	if( iLockDays < 1 ){ iLockDays = 1; }
+	if( (sNick.length() < 1) || (sNick.length() > 32) ){ throw runtime_error("Invalid Nickname\n"); }
+    CBitcoinAddress address(sAddr);
+    if (!address.IsValid() )
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid miner address");
+    if( isQueueNodeNickOrAddrExists(sNick, sAddr) ){ throw runtime_error("Nickname or coin address has been registered."); }
+    int bEncrypt = 0;   CWalletTx wtx;    string stxData = strRegisterAsNodeMagic + sAddr + ":" + sNick + ":" + inttostr(iLockDays);
+    if (pwalletMain->IsLocked())
+        throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Error: Please enter the wallet passphrase with walletpassphrase first.");
+
+	int64_t nAmount = MIN_Queue_Node_AMOUNT;
+	string strError = pwalletMain->SendMoneyToDestination(address.Get(), nAmount, wtx, stxData, bEncrypt);
+    if (strError != "")
+        throw JSONRPCError(RPC_WALLET_ERROR, strError);
+    {
+        LOCK(pwalletMain->cs_wallet);
+        pwalletMain->SetAddressBookName(address.Get(), sNick);
+    }
+    return wtx.GetHash().GetHex();
+}
+
+Value unlockqueuenode(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() < 1)
+	{
+		throw runtime_error(
+            "unlockqueuenode <miner address>\n");
+	}
+	string sAddr = params[0].get_str();
+    CBitcoinAddress address(sAddr);
+    if (!address.IsValid() )
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid miner address");
+
+	string sTm = i64tostr( GetAdjustedTime() ), sMsg = sAddr + "," + sTm;
+	string sSign = signMessage(sAddr, sMsg);
+	if( sSign.length() < 80 )
+	{
+		string sErr = strprintf("Sign message error, sAddr=[%s] not yours ? sign = [%s] \n", sAddr.c_str(), sSign.c_str());      throw runtime_error(sErr);
+	}
+    int bEncrypt = 0;   CWalletTx wtx;    string stxData = strResetQueueNodeLostBlockMagic + sAddr + ":" + sTm + ":" + sSign;
+    if (pwalletMain->IsLocked())
+        throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Error: Please enter the wallet passphrase with walletpassphrase first.");
+
+    CBitcoinAddress defAddr(sDefWalletAddress);
+	int64_t nAmount = 1 * COIN;
+	string strError = pwalletMain->SendMoneyToDestination(defAddr.Get(), nAmount, wtx, stxData, bEncrypt);
+    if (strError != "")
+        throw JSONRPCError(RPC_WALLET_ERROR, strError);
+
+    return wtx.GetHash().GetHex();
+}
+
+/*
+struct OneQueueNodePack
+{
+   int id, payid, lockdays;
+   string nick, coinaddr, tx;
+   int64_t inblock, gotblks, lost, clrlost, unlockblk, lastblktm;
+}; */
+Value getqueuenodelist(const Array& params, bool fHelp)
+{
+    /*if (fHelp || params.size() < 1)
+	{
+		throw runtime_error("getqueuenodelist <active>\n");
+	}*/
+	bool bOnlyActive=false;
+	if( params.size() > 0 )
+	{
+		string sAddr = params[0].get_str();   bOnlyActive = (sAddr == "1") || (sAddr == "active");
+	}
+    QueueNodeListPack pack;   pack.i6RecordCount=0;   //pack.vQueueNodes.clear();
+	bool rzt = ( bOnlyActive ? getAllActiveQueueNodes(pack) : getAllQueueNodes(pack) );
+	Object entry;   int iCount=pack.i6RecordCount;
+	entry.push_back( Pair("Total", iCount) );
+	if( iCount > 0 )
+	{
+		for( int i=0; i<iCount; i++ )
+		{
+			Object one;   string sNum = "Node " + inttostr(i + 1);
+			one.push_back( Pair("ID", pack.vQueueNodes[i].id) );
+			one.push_back( Pair("Nickname", pack.vQueueNodes[i].nick) );
+			one.push_back( Pair("Coin Address", pack.vQueueNodes[i].coinaddr) );
+			one.push_back( Pair("Tx", pack.vQueueNodes[i].tx) );
+			one.push_back( Pair("Register in block numb", pack.vQueueNodes[i].inblock) );
+			one.push_back( Pair("Got blocks", pack.vQueueNodes[i].gotblks) );
+			one.push_back( Pair("Lost blocks", pack.vQueueNodes[i].lost) );
+			one.push_back( Pair("Lock days", pack.vQueueNodes[i].lockdays) );
+			one.push_back( Pair("Unlock block numb", pack.vQueueNodes[i].unlockblk) );
+			one.push_back( Pair("Last got block time", pack.vQueueNodes[i].lastblktm) );
+			entry.push_back(Pair(sNum, one));
+		}
+	}
+    return entry;	
 }

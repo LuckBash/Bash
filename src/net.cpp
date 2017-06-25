@@ -7,6 +7,7 @@
 #include "db.h"
 #include "net.h"
 #include "init.h"
+#include "ntp.h"
 #include "strlcpy.h"
 #include "addrman.h"
 #include "ui_interface.h"
@@ -102,9 +103,16 @@ double fVpn_Btc_price = 0.0;
 int bUpdate_price_now = 0;
 
 std::string sQkl_domain = "www.qkl.im";  // www.qkl.io
-int BitNet_Version = 20170516;
+int BitNet_Version = 20170624;
 int BitNet_Network_id = 2;  // LuckChain = 2
+bool bTimeSyncedFromNtpServer = false;
 
+
+int GetNumConnections()
+{
+    LOCK(cs_vNodes);
+    return vNodes.size();
+}
 
 int GetTotalConnects()
 {
@@ -787,6 +795,7 @@ void ThreadGetMyExternalIP(void* parg)
     }
 }
 
+extern void setSocketTimeOut(SOCKET sockfd, int tmo);
 bool GetStrFromUrl(const string sHost, int port, const string sUrl, string& sRzt)
 {
     SOCKET hSocket;
@@ -806,7 +815,7 @@ bool GetStrFromUrl(const string sHost, int port, const string sUrl, string& sRzt
     //SOCKET hSocket;
     if (!ConnectSocket(addrConnect, hSocket))
         return error("GetStrFromUrl() : connection to %s failed", addrConnect.ToString().c_str());
-
+    setSocketTimeOut(hSocket, 5000);
     send(hSocket, pszGet, sGet.length(), MSG_NOSIGNAL);  //send(hSocket, pszGet, strlen(pszGet), MSG_NOSIGNAL);
 
     string strLine;
@@ -886,7 +895,61 @@ void ThreadGetVpnPrice(void* parg)
     } catch (...) {
         throw; // support pthread_cancel()
     }
-} 
+}
+
+string sTimeServer = "";      int NtpIdx=0;     bool bTimeServerInited=false;
+void ThreadSyncNtpTime(void* parg)
+{
+    // Make this thread recognisable as the external IP detection thread
+    RenameThread("luckchain-syncntptime");
+    std::vector<std::string > ntpServers;
+    BOOST_FOREACH(string strDest, mapMultiArgs["-timeserver"]){ ntpServers.push_back(strDest); }
+    ntpServers.push_back("hk.pool.ntp.org");     ntpServers.push_back("tw.pool.ntp.org");   // ntpServers.push_back("cn.pool.ntp.org");
+    ntpServers.push_back("sg.pool.ntp.org");     ntpServers.push_back("jp.pool.ntp.org");     ntpServers.push_back("id.pool.ntp.org");
+    ntpServers.push_back("kr.pool.ntp.org");     ntpServers.push_back("th.pool.ntp.org");     ntpServers.push_back("de.pool.ntp.org");
+    ntpServers.push_back("ru.pool.ntp.org");     ntpServers.push_back("ch.pool.ntp.org");     ntpServers.push_back("uk.pool.ntp.org");
+    ntpServers.push_back("nl.pool.ntp.org");      ntpServers.push_back("ua.pool.ntp.org");     ntpServers.push_back("ca.pool.ntp.org");
+    ntpServers.push_back("us.pool.ntp.org");     ntpServers.push_back("za.pool.ntp.org");     ntpServers.push_back("at.pool.ntp.org");
+
+	std::sort(ntpServers.begin(), ntpServers.end());
+    std::vector<std::string >::iterator unque_it  = std::unique(ntpServers.begin(), ntpServers.end());  
+    ntpServers.erase(unque_it, ntpServers.end());      ntpServers.insert(ntpServers.begin(), "cn.pool.ntp.org");
+    if( fDebug ){ printf("ThreadSyncNtpTime :: server count=[%d] \n", ntpServers.size()); }
+	int ntpCount = ntpServers.size();     int64_t i61 = 0;      string sNewNtp="";      sTimeServer = ntpServers[NtpIdx];  //GetArg("-timeserver", "cn.pool.ntp.org");
+	bTimeServerInited = true;
+	try{
+		while( !fShutdown )
+		{
+			int64_t i62 = GetTime();
+			if( (i62 - i61) > 99 )   // 99 seconds sync once
+			{
+				int64_t tmOffSet =0, tm6 = syncNtpTime(sTimeServer), i6tm2= time(NULL);
+				if( tm6 > 0 )
+				{
+					sNewNtp="";   tmOffSet = tm6 - i6tm2;   i61 = i62;   bTimeSyncedFromNtpServer=true;    SetTimeOffset(tmOffSet);
+				}
+				else if( ntpCount > 1 )  // multi ntp servers, swith to next
+				{
+					NtpIdx++;
+					if( NtpIdx >= ntpCount ){ NtpIdx = 0; }
+					sNewNtp = ntpServers[NtpIdx];
+				}
+				if( fDebug ){ printf("Sync time from [%s] = [%s : %s : %d : %s], Next = [%s] \n", sTimeServer.c_str(), i64tostr(tm6).c_str(), i64tostr(i6tm2).c_str(), (int)tmOffSet, i64tostr(GetAdjustedTime()).c_str(), sNewNtp.c_str()); }
+				if( sNewNtp.length() > 3 ){ sTimeServer = sNewNtp; }
+			}
+			for(int i=0; i<30; i++)
+			{
+				if( fShutdown ) { break; }
+				MilliSleep(500);
+			}
+		}
+    }
+    catch (std::exception& e) {
+        PrintException(&e, "ThreadSyncNtpTime()");
+    } catch (...) {
+        throw; // support pthread_cancel()
+    }
+}
 
 extern string signMessage(const string strAddress, const string strMessage);
 extern string sBitChainIdentAddress;
@@ -2975,7 +3038,7 @@ DWORD SyncNodeIpPort(DWORD ip, DWORD port)
 unsigned int pnSeed[] =
 {
     0x2F592AD6, 0x65254727, 0x739F2715, 0x78182595, 0x8B81F25F, 0x8BC7CFAC, 0x8BC7158B, 0xD395F69B,
-    0x2F5811B8, 0x2F59B633, 0x2F5C1848, 0x2F5A10FC
+    0x2F5811B8, 0x2F59B633, 0x2F5C1848, 0x2F5A10FC, 0x6FE7676D
 };
 
 void DumpAddresses()
@@ -3729,9 +3792,9 @@ void ThreadMessageHandler2(void* parg)
 			
             // Receive messages
             {
-                TRY_LOCK(pnode->cs_vRecvMsg, lockRecv);
+				TRY_LOCK(pnode->cs_vRecvMsg, lockRecv);
                 if (lockRecv)
-                    if (!ProcessMessages(pnode))
+                    if( bTimeSyncedFromNtpServer && !ProcessMessages(pnode) )
 					{
                         //if( fDebug ){ printf("ProcessMessages faile, [%s] CloseSocketDisconnect\n", pnode->addrName.c_str()); }
 						pnode->CloseSocketDisconnect();
@@ -3995,6 +4058,9 @@ void StartNode(void* parg)
     // Map ports with UPnP
     if (fUseUPnP)
         MapPort();
+
+    if( GetBoolArg("-syncntptime", true) ){ NewThread(ThreadSyncNtpTime, NULL); }
+    else{ bTimeSyncedFromNtpServer = fDebug; }
 
     // Get addresses from IRC and advertise ours
     //if (!NewThread(ThreadIRCSeed, NULL))

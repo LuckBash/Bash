@@ -40,15 +40,32 @@ libzerocoin::Params* ZCParams;
 CBigNum bnProofOfWorkLimit(~uint256(0) >> 20); // "standard" scrypt target limit for proof of work, results with 0,000244140625 proof-of-work difficulty
 CBigNum bnProofOfStakeLimit(~uint256(0) >> 20);
 CBigNum bnProofOfStakeLimitV2(~uint256(0) >> 48);
-CBigNum bnProofOfWorkLimitTestNet(~uint256(0) >> 16);
+CBigNum bnProofOfWorkLimitTestNet(~uint256(0) >> 1);
+CBigNum bnQueueMiningProofOfStakeLimit(~uint256(0) >> 1);
+
+const uint256 hashGenesisBlock("0x00000bc87d0385e25417c877e00e959087e8eebbf76722dfcff9e76da7cbf3ea");
+const uint256 hashGenesisBlockTestNet("0x00000335d0f101f4a000216013cdb9838b1965d09d2f0dade343ae73e682ab65");
 
 unsigned int nStakeMinAge = 8 * 60 * 60; // 8 hours
 unsigned int nStakeMaxAge = -1; // unlimited
 unsigned int nModifierInterval = 10 * 60; // time to elapse before new modifier is computed
 
-int nCoinbaseMaturity = 100;	//int nCoinbaseMaturity = 500;
+int nCoinbaseMaturity = 100;
+int nNodeQueueMiningRulesCoinbaseMaturity = 1;
 CBlockIndex* pindexGenesisBlock = NULL;
 int64_t nBestHeight = -1;
+const volatile int64_t Queue_PoS_Rules_Acitve_Height = 350000;
+const int64_t Queue_PoS_Rules_Acitve_Height_Test = 100;
+const volatile int64_t Accept_Register_QPoS_Node_Height = 348900;
+const int64_t Accept_Register_QPoS_Node_Height_Test = 10;
+unsigned int nNodeQueueMiningRulesStakeMinAge = 50;  // 50 seconds
+const int64_t MIN_STAKE_TX_AMOUNT = 10000 * COIN;  // 2015.10.01 add
+const int64_t MIN_Queue_Node_AMOUNT = 1000000 * COIN;
+const int64_t Queue_Node_Block_Reward = 30 * COIN;
+const int Queue_Node_Block_Tolerant_Interval = 10;
+const int Queue_Node_Block_Min_Interval = 59;
+const int Queue_Node_Block_Max_Interval = 60 * 2;  // 2 minutes
+const string strRegisterAsNodeMagic = "Register Queue Node:";
 
 uint256 nBestChainTrust = 0;
 uint256 nBestInvalidTrust = 0;
@@ -73,6 +90,7 @@ const string strMessageMagic = "LuckChain Signed Message:\n";
 extern int dw_zip_block;  // 2015.12.30 add
 const int64_t MIN_TX_FEE_old = 10 * COIN;
 const int64_t New_MIN_TX_FEE = 1 * COIN;
+const int64_t Queue_Node_Actived_MIN_TX_FEE = 0.1 * COIN;
 const int64_t f20161111_NewTxFee_Active_Height = 70000;  // 2016.11.11 add
 
 // Settings
@@ -101,7 +119,7 @@ bool isSyncBlockMode()
 {
 	bool rzt = false;
 	int64_t i = GetNumBlocksOfPeers();
-	if( (i > nBestHeight) && ( (i - nBestHeight) > (3 * 1440) ) ) rzt = true;
+	if( (i > nBestHeight) && ( (i - nBestHeight) > 1440) ) rzt = true;
 	return rzt;
 }
 
@@ -590,9 +608,12 @@ bool CTransaction::CheckTransaction(bool bChkMiniValue) const
         // 2015.09.27 add, enforce minimum output amount
         if( (!fBitBetEncashTx) && bChkMiniValue && (nBestHeight >= f20161111_NewTxFee_Active_Height) && (!IsCoinBase()) )
         {
-            uint64_t u6Fee = getMIN_TXOUT_AMOUNT(nBestHeight);
-            if ((!txout.IsEmpty()) && txout.nValue < u6Fee)   //if ((!txout.IsEmpty()) && txout.nValue < getMIN_TXOUT_AMOUNT(nBestHeight))
-                return DoS(0, error("CTransaction::CheckTransaction() : txout.nValue(%s) below minimum(%s), Hei=[%s] ", u64tostr(txout.nValue).c_str(), u64tostr(u6Fee).c_str(), u64tostr(nBestHeight).c_str()));
+            if( (nBestHeight + 1) == (fTestNet ? Queue_PoS_Rules_Acitve_Height_Test : Queue_PoS_Rules_Acitve_Height) ){  }
+            else{
+                uint64_t u6Fee = getMIN_TXOUT_AMOUNT(nBestHeight);
+                if ((!txout.IsEmpty()) && txout.nValue < u6Fee)   //if ((!txout.IsEmpty()) && txout.nValue < getMIN_TXOUT_AMOUNT(nBestHeight))
+                    return DoS(0, error("CTransaction::CheckTransaction() : txout.nValue(%s) < minimum(%s), Hei=[%s] ", u64tostr(txout.nValue).c_str(), u64tostr(u6Fee).c_str(), u64tostr(nBestHeight).c_str()));
+            }
         }
         if (txout.nValue < 0)
             return DoS(100, error("CTransaction::CheckTransaction() : txout.nValue negative"));
@@ -658,7 +679,13 @@ int64_t CTransaction::GetMinFee(unsigned int nBlockSize, enum GetMinFee_mode mod
     return nMinFee;
 }
 
-
+int GetPrevoutDepthInMainChain(const COutPoint& prevout)
+{
+    CTxIndex txindex;     CTxDB txdb("r");      int rzt=0;
+    if (!txdb.ReadTxIndex(prevout.hash, txindex)){  return rzt;  }
+    rzt = txindex.GetDepthInMainChain();
+    return rzt;
+}
 bool AcceptToMemoryPool(CTxMemPool& pool, CTransaction &tx,
                         bool* pfMissingInputs)
 {
@@ -681,7 +708,7 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CTransaction &tx,
         return tx.DoS(100, error("AcceptToMemoryPool : coinstake as individual tx"));
 
     // Rather not work on nonstandard transactions (unless -testnet)
-    if (!fTestNet && !IsStandardTx(tx))
+    if( !IsStandardTx(tx) )  //if (!fTestNet && !IsStandardTx(tx))
         return error("AcceptToMemoryPool : nonstandard transaction type");
 
     // is it already in the memory pool?
@@ -689,6 +716,7 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CTransaction &tx,
     if (pool.exists(hash))
         return false;
 
+    bool bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nBestHeight + 1);
     // Check for conflicts with in-memory transactions
     {
     LOCK(pool.cs); // protect pool.mapNextTx
@@ -700,6 +728,12 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CTransaction &tx,
             // Disable replacement feature for now
             return false;
         }
+        if( bQPoS_Rules_Actived && (outpoint.hash > 0) )
+        {
+            int preDep = GetPrevoutDepthInMainChain(outpoint);
+            if( fDebug ){ printf("AcceptToMemoryPool : tx.vin[%d].prevout Depth=[%d], hash=[%s] \n", i, preDep, outpoint.hash.ToString().c_str()); }
+            if( preDep < 1 ){ return error("AcceptToMemoryPool : tx.vin[%d].prevout.hash=[%s], Depth=[%d] < 1 :( \n", i, outpoint.hash.ToString().c_str(), preDep); }
+        }
     }
     }
 
@@ -709,6 +743,8 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CTransaction &tx,
         // do we already have it?
         if (txdb.ContainsTx(hash))
             return false;
+
+        if( !canSpentQueueNodeCoin(tx, nBestHeight+1) ){ return error("AcceptToMemoryPool : can't spent QPoS node's coin"); }
 
         MapPrevTx mapInputs;
         map<uint256, CTxIndex> mapUnused;
@@ -903,13 +939,20 @@ int CMerkleTx::GetBlocksToMaturity() const
     if (!(IsCoinBase() || IsCoinStake()))
         return 0;
 	
-	int vCoinbaseMaturity = nCoinbaseMaturity;
-	/*CBlockIndex *pindexRet; 
-	int i = GetDepthInMainChain(pindexRet);
-	if( pindexRet->nHeight <= 10 )
-		vCoinbaseMaturity = 0; */
-    //return max(0, (vCoinbaseMaturity+10) - i);	//
-	return max(0, (vCoinbaseMaturity+10) - GetDepthInMainChain());
+	int vCoinbaseMaturity = nCoinbaseMaturity;  // 100
+	CBlockIndex *pindexRet = NULL;
+	int iDep = GetDepthInMainChain(pindexRet);
+	if( pindexRet )
+	{
+		vCoinbaseMaturity = Get_nCoinbaseMaturity(pindexRet->nHeight);
+		if( vCoinbaseMaturity == nNodeQueueMiningRulesCoinbaseMaturity )
+		{
+			return max(0, vCoinbaseMaturity - iDep);
+		}
+	}
+	// if( pindexRet->nHeight <= 10 ){ vCoinbaseMaturity = 0; }
+    return max(0, (vCoinbaseMaturity+10) - iDep);	//
+	//return max(0, (vCoinbaseMaturity+10) - GetDepthInMainChain());
 }
 
 
@@ -1047,7 +1090,7 @@ uint256 WantedByOrphan(const CBlock* pblockOrphan)
     return pblockOrphan->hashPrevBlock;
 }
 
-static CBigNum GetProofOfStakeLimit(int nHeight)
+static CBigNum GetProofOfStakeLimit(int64_t nHeight)
 {
     if (IsProtocolV2(nHeight))
         return bnProofOfStakeLimitV2;
@@ -1071,12 +1114,31 @@ int64_t GetProofOfWorkReward(int64_t nFees)
 
 const int YEARLY_BLOCKCOUNT = 525600;	// 365 * 1440
 
+int64_t GetStakeRewardByLockDays(int64_t nLockDays)
+{
+    int64_t nSubsidy = 10 * COIN;  // Lock 1~9 days, reward 20 BASH
+	if( nLockDays >= 360 ){ nSubsidy = 100 * COIN; }  // Lock 360 day, reward 100 BASH
+    else if( nLockDays >= 180 ){ nSubsidy = 60 * COIN; }  // Lock 180 day, reward 50 BASH
+    else if( nLockDays >= 90 ){ nSubsidy = 40 * COIN; }  // Lock 90 day, reward 40 BASH
+    else if( nLockDays >= 30 ){ nSubsidy = 30 * COIN; }  // Lock 30 day, reward 30 BASH
+    else if( nLockDays >= 10 ){ nSubsidy = 20 * COIN; }  // Lock 10 day, reward 25 BASH
+    return nSubsidy;
+}
 // miner's coin stake reward based on coin age spent (coin-days)
-int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees)
+int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees, const string sMinerAddr)
 {
     int64_t nSubsidy = getMIN_TX_FEE(nBestHeight);  // MIN_TX_FEE = 10 * COIN
     if( nBestHeight >= New_Rules_161129_BLK_10W ){  nSubsidy = 10 * COIN;  }   //  New_Rules_161129_BLK_10W = 100,000
-	
+    if( Is_Queue_PoS_Rules_Acitved(nCoinAge) )
+    {
+        int64_t i6LockDays = 0;      bool bSysNode = IsSystemNode(sMinerAddr);
+        if( bSysNode || (sMinerAddr.length() < 33) ){ nSubsidy = Queue_Node_Actived_MIN_TX_FEE; }  // 0.1 BASH, system node no block reward
+        else{
+            i6LockDays = (int64_t)GetQueueNodeLockDays("GetProofOfStakeReward()", sMinerAddr, -1);
+            nSubsidy = GetStakeRewardByLockDays(i6LockDays);
+        }
+        if( fDebug ){ printf("GetProofOfStakeReward() : blkHeight=[%s], bSysNode=[%d], i6LockDays=[%s], nSubsidy=[%s], sMinerAddr=[%s] \n", i64tostr(nCoinAge).c_str(), bSysNode, i64tostr(i6LockDays).c_str(), FormatMoney(nSubsidy).c_str(), sMinerAddr.c_str()); }
+    }
     //int64_t nRewardCoinYear = 0.001 * COIN;	// 0.1%
     //if( nBestHeight >= NewTxFee_RewardCoinYear_Active_Height )  // 2015.09.07 add
 	
@@ -1170,8 +1232,10 @@ const CBlockIndex* GetLastBlockIndex(const CBlockIndex* pindex, bool fProofOfSta
 static unsigned int GetNextTargetRequiredV2(const CBlockIndex* pindexLast, bool fProofOfStake)
 {
     CBigNum bnTargetLimit = fProofOfStake ? GetProofOfStakeLimit(pindexLast->nHeight) : bnProofOfWorkLimit;
+    bool bQPoS_Rules_Actived = (pindexLast != NULL) && Is_Queue_PoS_Rules_Acitved(pindexLast->nHeight + 1);
+	if( bQPoS_Rules_Actived ){ bnTargetLimit = bnQueueMiningProofOfStakeLimit; }
 
-    if( (pindexLast == NULL) || (!fProofOfStake) )
+    if( bQPoS_Rules_Actived || (pindexLast == NULL) || (!fProofOfStake) )
         return bnTargetLimit.GetCompact(); // genesis block or PoW block
 
     const CBlockIndex* pindexPrev = GetLastBlockIndex(pindexLast, fProofOfStake);
@@ -1208,8 +1272,24 @@ unsigned int GetNextTargetRequired(const CBlockIndex* pindexLast, bool fProofOfS
         return GetNextTargetRequiredV2(pindexLast, fProofOfStake);
 }
 
+CBlockIndex* GetBlockIndexByHash(const uint256 blkHash)
+{
+    // Is the tx in a block that's in the main chain
+    map<uint256, CBlockIndex*>::iterator mi = mapBlockIndex.find(blkHash);
+    if (mi == mapBlockIndex.end())
+        return NULL;
+    CBlockIndex* pindex = (*mi).second;
+    if (!pindex || !pindex->IsInMainChain())
+        return NULL;
+    return pindex;
+}
+
 bool CheckProofOfWork(uint256 hash, unsigned int nBits)
 {
+    /* int64_t nHei=0;      CBlockIndex* pidx = GetBlockIndexByHash(hash);
+	if( pidx ){ nHei = pidx->nHeight; }
+    if( fDebug ){ printf("CheckProofOfWork :: block Height=[%s], nBits=[%d], hash=[%s] \n", i64tostr(nHei).c_str(), nBits, hash.ToString().c_str()); } */
+
     CBigNum bnTarget;
     bnTarget.SetCompact(nBits);
 
@@ -1446,7 +1526,7 @@ bool CTransaction::ConnectInputs(CTxDB& txdb, MapPrevTx inputs, map<uint256, CTx
         int64_t nValueIn = 0;
         int64_t nFees = 0;
 
-		int vCoinbaseMaturity = nCoinbaseMaturity;
+		int vCoinbaseMaturity = Get_nCoinbaseMaturity(pindexBlock->nHeight);
 		//if( pindexBlock->nHeight <= 10 )	//if( nBestHeight <= 10 )
 		//	vCoinbaseMaturity = 0;
 
@@ -1575,7 +1655,8 @@ bool CBlock::DisconnectBlock(CTxDB& txdb, CBlockIndex* pindex)
     BOOST_FOREACH(CTransaction& tx, vtx)
 	{
         SyncWithWallets(tx, this, false, false);
-		if( !bLuckChainRollbacking ) disconnectBitBet(tx);   // 2016.10.19 add
+		if( !bLuckChainRollbacking ) disconnectBitBet(tx);     // 2016.10.19 add
+        processQueueMiningTx(tx, pindex->nHeight, false, pindex->GetBlockTime());  // 2017.05.30 add
 	}
 
     return true;
@@ -1686,7 +1767,7 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
             if (!tx.ConnectInputs(txdb, mapInputs, mapQueuedChanges, posThisTx, pindex, true, false, fBitBetEncashTx))
                 return false;
         }
-
+        if( !canSpentQueueNodeCoin(tx, pindex->nHeight) ){ return error("ConnectBlock() : can't spent QPoS node's coin"); }
         mapQueuedChanges[hashTx] = CTxIndex(posThisTx, tx.vout.size());
     }
 
@@ -1707,20 +1788,45 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
             return error("ConnectBlock() : %s unable to get coin age for coinstake", vtx[1].GetHash().ToString().substr(0,10).c_str());
 
         const CTxIn& txin = vtx[1].vin[0];
-        std::string sPreTargetAddr = "";
+        std::string sBlockFinder = "";
         int64_t iAmnt = 0;
-        getTxinAddressAndAmount(txin, sPreTargetAddr, iAmnt);
+        getTxinAddressAndAmount(txin, sBlockFinder, iAmnt);
         double dob = 0;
         if( iAmnt > 0 ){ dob = (double)iAmnt / (double)COIN; }
-        if( fDebug ){ printf("ConnectBlock:: stake from [%s], amount = [%f] \n", sPreTargetAddr.c_str(), dob); }
+        if( fDebug ){ printf("ConnectBlock() : stake from [%s], amount = [%f] \n", sBlockFinder.c_str(), dob); }
 
-        if( (nBestHeight >= NewTxFee_RewardCoinYear_Active_Height) && (iAmnt < MIN_STAKE_TX_AMOUNT) )  // MIN_STAKE_TX_AMOUNT = 1000 * COIN
-        { 
-            return error("ConnectBlock() : stake coin [%f] < MIN_STAKE_TX_AMOUNT", dob);
-        }
-        if( !checkUserWeight(sPreTargetAddr) ){  return error("ConnectBlock() : checkUserWeight(%s) false :(", sPreTargetAddr.c_str());  }
+		int64_t nHeight = pindex->nHeight, blkTm = pindex->GetBlockTime();
+		if( Is_Queue_PoS_Rules_Acitved(nHeight) )
+		{
+			bool bSysNode = IsSystemNode(sBlockFinder);
+            if( !bSysNode && (iAmnt < MIN_Queue_Node_AMOUNT) ){ return error("ConnectBlock() : stake coin [%f] < MIN_Queue_Node_AMOUNT, bSysNode=[%d]", dob, bSysNode); }
+			if( !isValidBlockHeight(*this, nHeight) ){ return error("ConnectBlock() : invalid block height"); }
+			if( !bSysNode && !isQueueNodeExists(sBlockFinder) ){ return error("ConnectBlock() : Block Finder not reg and not system node"); }
 
-        int64_t nCalculatedStakeReward = GetProofOfStakeReward(nCoinAge, nFees);
+			int64_t tmNow = GetAdjustedTime(),  prevBlkTm = pindex->pprev->GetBlockTime(), blkTmSpace = blkTm - prevBlkTm, tmTolerant=tmNow+Queue_Node_Block_Tolerant_Interval;
+			if( fDebug ){ printf("ConnectBlock() : check for QPoS, nHeight=[%s], blkTmSpace=[%s], blkTm=[%s : %s]=tmNow \n", i64tostr(nHeight).c_str(), i64tostr(blkTmSpace).c_str(), i64tostr(blkTm).c_str(), i64tostr(tmNow).c_str()); }
+			if( (blkTmSpace < Queue_Node_Block_Min_Interval) || (blkTm > tmTolerant) ){ return error("ConnectBlock() : block timestamp wrong"); }
+			bool bLostQueueNode = ( blkTmSpace > Queue_Node_Block_Max_Interval );  // 120, queue node lost, is sys node?
+			string sCurQueueMiner = getCurrentQueueMiner();
+			if( fDebug ){ printf("ConnectBlock() : QPoS, bLostQueueNode=[%d], pprev = [%X], bSysNode=[%d], stake from [%s], sCurQueueMiner = [%s] \n", bLostQueueNode, pindex->pprev, bSysNode, sBlockFinder.c_str(), sCurQueueMiner.c_str()); }
+			if( sCurQueueMiner.length() < 33 )  // no active node, accept system node's block
+			{
+				if( !bSysNode ) return error("ConnectBlock() : sCurQueueMiner [%s] wrong and not a system node", sCurQueueMiner.c_str());
+			}
+			else if( sCurQueueMiner != sBlockFinder )
+			{
+				if( bLostQueueNode && bSysNode ){ updateQueueNodeLostBlockCount(sCurQueueMiner); }
+				else{ return error("ConnectBlock() : invalid miner (bLostQueueNode=%d : bSysNode=%d)", bLostQueueNode, bSysNode); }
+			}
+		}else{
+            if( (nBestHeight >= NewTxFee_RewardCoinYear_Active_Height) && (iAmnt < MIN_STAKE_TX_AMOUNT) )  // MIN_STAKE_TX_AMOUNT = 1000 * COIN
+            { 
+                return error("ConnectBlock() : stake coin [%f] < MIN_STAKE_TX_AMOUNT", dob);
+            }
+            if( !checkUserWeight(sBlockFinder) ){  return error("ConnectBlock() : checkUserWeight(%s) false :(", sBlockFinder.c_str());  }
+		}
+
+        int64_t nCalculatedStakeReward = GetProofOfStakeReward(nHeight, nFees, sBlockFinder);
 #ifdef WIN32
         if( fDebug ){ printf("ConnectBlock() : coinstake pays (nStakeReward=%I64u vs nCalculatedStakeReward=%I64u) \n", nStakeReward, nCalculatedStakeReward); }
 #endif
@@ -1757,8 +1863,11 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
 
     // Watch for transactions paying to me
     BOOST_FOREACH(CTransaction& tx, vtx)
+    {
         SyncWithWallets(tx, this, true);
-
+        processQueueMiningTx(tx, pindex->nHeight, true, pindex->GetBlockTime());  // 2017.05.30 add
+    }
+    updateQueueNodesStatus();
     return true;
 }
 
@@ -1790,9 +1899,10 @@ dbLuckChainWriteSqlBegin( 1 );    // 2016.10.14 add
 	}
 dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
 #ifdef QT_GUI
+	if( fDebug ){ printf("isGoodBlockGameTxs() : call notifyReceiveNewBlockMsg begin \n"); }
 	notifyReceiveNewBlockMsg( u6Hei, (uint64_t) block.nTime );  // 2016.10.19 add
+	if( fDebug ){ printf("isGoodBlockGameTxs() : call notifyReceiveNewBlockMsg end \n"); }
 #endif
-
 	return rzt;
 }
 
@@ -2183,7 +2293,11 @@ bool CTransaction::GetCoinAge(CTxDB& txdb, uint64_t& nCoinAge) const
         CBlock block;
         if (!block.ReadFromDisk(txindex.pos.nFile, txindex.pos.nBlockPos, false))
             return false; // unable to read block of previous transaction
-        if (block.GetBlockTime() + nStakeMinAge > nTime)
+
+        CBlockIndex* pIndex = GetBlockIndexByHash(block.GetHash());   int64_t blkHeight=nBestHeight;
+        if( pIndex ){ blkHeight = pIndex->nHeight; }
+		if( fDebug ){ printf("CTransaction::GetCoinAge:: [%X], blkHeight = [%d : %d] \n", pIndex, (int)blkHeight, (int)nBestHeight); }
+        if (block.GetBlockTime() + Get_nStakeMinAge(blkHeight) > nTime)
             continue; // only count coins meeting min age requirement
 
         int64_t nValueIn = txPrev.vout[txin.prevout.n].nValue;
@@ -2409,7 +2523,7 @@ bool CBlock::AcceptBlock(CNode* pfrom, bool bPassBlock)
     uint64_t nHeight = pindexPrev->nHeight+1;
 
   bool bPassMode = (iFastsyncblockModeArg > 0) && (nHeight < (iFastSyncBlockHeiOk + 32));
-if( fDebug ){ printf("AcceptBlock %d hi=%d, PassMode %d\n", bPassBlock, nHeight, bPassMode); }
+if( fDebug ){ printf("AcceptBlock %d hi=%d : %d, PassMode %d\n", bPassBlock, (int)nHeight, (int)nBestHeight, bPassMode); }
   if( !bPassBlock ){  // 2015.08.19 add
 //if( fDebug ) OutputDebugStringA("AcceptBlock 888");
     if (IsProtocolV2(nHeight) && nVersion < 7)
@@ -2422,22 +2536,54 @@ if( fDebug ){ printf("AcceptBlock %d hi=%d, PassMode %d\n", bPassBlock, nHeight,
 		return DoS(100, error("AcceptBlock() : reject proof-of-work at height %d", nHeight));
 	}
 
-    // Check timestamp
-    if (GetBlockTime() > FutureDrift(GetAdjustedTime(), nHeight))
-        return error("AcceptBlock() : block timestamp too far in the future");
-
-    // Check coinbase timestamp
-    /*if (GetBlockTime() > FutureDrift((int64_t)vtx[0].nTime, nHeight))
+    int64_t blkTm = GetBlockTime();      bool bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nHeight);
+    if( bQPoS_Rules_Actived )
 	{
-        printf("BlockTime=%I64u, vtx.nTime=%I64u, nHeight=%u\n", GetBlockTime(), (int64_t)vtx[0].nTime, nHeight);
-		return DoS(50, error("AcceptBlock() : coinbase timestamp is too early"));
-	}*/
+        if( nHeight <= nBestHeight ){ return error("AcceptBlock() : block height(%d) <= nBestHeight(%d)", (int)nHeight, (int)nBestHeight); }
+        const CTxIn& txin = vtx[1].vin[0];      std::string sBlockFinder = "";      int64_t iAmnt = 0;      double dob = 0;
+        getTxinAddressAndAmount(txin, sBlockFinder, iAmnt);
+        if( iAmnt > 0 ){ dob = (double)iAmnt / (double)COIN; }
+        if( fDebug ){ printf("AcceptBlock() : stake from [%s], amount = [%f] \n", sBlockFinder.c_str(), dob); }
 
+		bool bSysNode = IsSystemNode(sBlockFinder);
+        if( !bSysNode && (iAmnt < MIN_Queue_Node_AMOUNT) ){ return error("AcceptBlock() : stake coin [%f] < MIN_Queue_Node_AMOUNT, bSysNode=[%d]", dob, bSysNode); }
+		if( !isValidBlockHeight(*this, nHeight) ){ return error("AcceptBlock() : invalid block height"); }
+		if( !bSysNode && !isQueueNodeExists(sBlockFinder) ){ return error("AcceptBlock() : Block Finder not reg and not system node"); }
+		//if( !IsTheRightQueueStakeMiner(*this) ){ return error("AcceptBlock() : Block Finder not right :("); }
+
+		int64_t tmNow = GetAdjustedTime(),  prevBlkTm = pindexPrev->GetBlockTime(), blkTmSpace = blkTm - prevBlkTm, tmTolerant=tmNow+Queue_Node_Block_Tolerant_Interval;
+		if( fDebug ){ printf("AcceptBlock() : check for QPoS, nHeight=[%s], blkTmSpace=[%s], blkTm=[%s : %s]=tmNow, sBlockFinder=[%s] \n", i64tostr(nHeight).c_str(), i64tostr(blkTmSpace).c_str(), i64tostr(blkTm).c_str(), i64tostr(tmNow).c_str(), sBlockFinder.c_str()); }
+		if( (blkTmSpace < Queue_Node_Block_Min_Interval) || (blkTm > tmTolerant) ){ return error("AcceptBlock() : block timestamp wrong"); }
+		bool bLostQueueNode = ( blkTmSpace > Queue_Node_Block_Max_Interval );  // 120, queue node lost, is sys node?
+		string sCurQueueMiner = getCurrentQueueMiner();
+		if( fDebug ){ printf("AcceptBlock() : QPoS, bLostQueueNode=[%d], bSysNode=[%d], stake from [%s], sCurQueueMiner = [%s] \n", bLostQueueNode, bSysNode, sBlockFinder.c_str(), sCurQueueMiner.c_str()); }
+		if( sCurQueueMiner.length() < 33 )  // no active node, accept system node's block
+		{
+			if( !bSysNode ) return error("AcceptBlock() : sCurQueueMiner [%s] wrong and not a system node", sCurQueueMiner.c_str());
+		}
+		else if( sCurQueueMiner != sBlockFinder )
+		{
+			if( bLostQueueNode && bSysNode ){ }
+			else{ return error("AcceptBlock() : invalid miner (bLostQueueNode=%d : bSysNode=%d)", bLostQueueNode, bSysNode); }
+		}
+	}else{
+        // Check timestamp
+        if ( blkTm > FutureDrift(GetAdjustedTime(), nHeight) )
+            return error("AcceptBlock() : block timestamp too far in the future");
+
+        // Check coinbase timestamp
+        /*if (GetBlockTime() > FutureDrift((int64_t)vtx[0].nTime, nHeight))
+	    {
+            printf("BlockTime=%I64u, vtx.nTime=%I64u, nHeight=%u\n", GetBlockTime(), (int64_t)vtx[0].nTime, nHeight);
+		    return DoS(50, error("AcceptBlock() : coinbase timestamp is too early"));
+	    }*/
+	}
+	
   if( !bPassMode )
   {
     // Check coinstake timestamp
     if (IsProofOfStake() && !CheckCoinStakeTimestamp(nHeight, GetBlockTime(), (int64_t)vtx[1].nTime))
-        return DoS(50, error("AcceptBlock() : coinstake timestamp violation nTimeBlock=%"PRId64" nTimeTx=%u", GetBlockTime(), vtx[1].nTime));
+        return DoS(50, error("AcceptBlock() : coinstake timestamp violation nTimeBlock=%s nTimeTx=%u", i64tostr(GetBlockTime()).c_str(), vtx[1].nTime));
 
     unsigned int aBit2 = GetNextTargetRequired(pindexPrev, IsProofOfStake());
 if( fDebug ){ printf("AcceptBlock nBits=%d : %d\n", nBits, aBit2); }
@@ -2454,11 +2600,20 @@ if( fDebug ){ printf("AcceptBlock nBits=%d : %d\n", nBits, aBit2); }
 	{
         if (!IsFinalTx(tx, nHeight, GetBlockTime()))
             return DoS(10, error("AcceptBlock() : contains a non-final transaction"));
-			
-//-- 2015.04.27 add, Check for BitNet Lottery begin
-		//if( (isSyncBlockMode() == false) && isRejectTransaction(tx, nHeight) ){ return DoS(10, error("AcceptBlock() : block includes not under rule's tx, ban.")); }
-		//bRejTx = isRejectTransaction(tx, nHeight);
-//-- 2015.04.27 add, Check for BitNet Lottery end
+
+        if( bQPoS_Rules_Actived )
+        {
+            for (unsigned int i = 0; i < tx.vin.size(); i++)
+            {
+                COutPoint outpoint = tx.vin[i].prevout;
+                if( outpoint.hash > 0 )
+                {
+                    int preDep = GetPrevoutDepthInMainChain(outpoint);
+                    if( fDebug ){ printf("AcceptBlock() : tx.vin[%d].prevout Depth=[%d], hash=[%s] \n", i, preDep, outpoint.hash.ToString().c_str()); }
+                    if( preDep < 1 ){ return DoS(10, error("AcceptBlock : tx.vin[%d].prevout.hash=[%s], Depth=[%d] < 1 :( \n", i, outpoint.hash.ToString().c_str(), preDep)); }
+                }
+            }
+        }
 	}
 
     // Check that the block chain matches the known block chain up to a checkpoint
@@ -2729,10 +2884,12 @@ bool CBlock::SignBlock(CWallet& wallet, int64_t nFees)
 
     CKey key;
     CTransaction txCoinStake;
-    if (IsProtocolV2(nBestHeight+1))
+    bool bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nBestHeight + 1);
+    if( !bQPoS_Rules_Actived && IsProtocolV2(nBestHeight+1) )
         txCoinStake.nTime &= ~STAKE_TIMESTAMP_MASK;
 
     int64_t nSearchTime = txCoinStake.nTime; // search to current time
+	//if( bQPoS_Rules_Actived ){ nSearchTime++; }
     if (nSearchTime > nLastCoinStakeSearchTime)
     {
 		int64_t nSearchInterval = IsProtocolV2(nBestHeight+1) ? 1 : nSearchTime - nLastCoinStakeSearchTime;
@@ -2745,8 +2902,14 @@ bool CBlock::SignBlock(CWallet& wallet, int64_t nFees)
 				// make sure coinstake would meet timestamp protocol
                 //    as it would be the same as the block timestamp
                 vtx[0].nTime = nTime = txCoinStake.nTime;
-                nTime = max(pindexBest->GetPastTimeLimit()+1, GetMaxTransactionTime());
-                nTime = max(GetBlockTime(), PastDrift(pindexBest->GetBlockTime(), pindexBest->nHeight+1));
+                if( bQPoS_Rules_Actived )
+                {
+                    //vtx[0].nTime = nLastCoinStakeSearchTime;
+                }
+                else{
+                    nTime = max(pindexBest->GetPastTimeLimit()+1, GetMaxTransactionTime());
+                    nTime = max(GetBlockTime(), PastDrift(pindexBest->GetBlockTime(), pindexBest->nHeight+1));
+                }
                 // we have to make sure that we have no future timestamps in
                 //    our transactions set
                 for (vector<CTransaction>::iterator it = vtx.begin(); it != vtx.end();)
@@ -2871,8 +3034,12 @@ bool LoadBlockIndex(bool fAllowNew)
         pchMessageStart[3] = 0xef;
 
         bnTrustedModulus.SetHex("f0d14cf72623dacfe738d0892b599be0f31052239cddd95a3f25101c801dc990453b38c9434efe3f372db39a32c2bb44cbaea72d62c8931fa785b0ec44531308df3e46069be5573e49bb29f4d479bfc3d162f57a5965db03810be7636da265bfced9c01a6b0296c77910ebdc8016f70174f0f18a57b3b971ac43a934c6aedbc5c866764a3622b5b7e3f9832b8b3f133c849dbcc0396588abcd1e41048555746e4823fb8aba5b3d23692c6857fccce733d6bb6ec1d5ea0afafecea14a0f6f798b6b27f77dc989c557795cc39a0940ef6bb29a7fc84135193a55bcfc2f01dd73efad1b69f45a55198bd0e6bef4d338e452f6a420f1ae2b1167b923f76633ab6e55");
-        bnProofOfWorkLimit = bnProofOfWorkLimitTestNet; // 16 bits PoW target limit for testnet
-        nStakeMinAge = 1 * 60 * 60; // test net min age is 1 hour
+        if( nBestHeight >= 0 )
+        {
+            bnProofOfWorkLimit = bnProofOfWorkLimitTestNet; // 16 bits PoW target limit for testnet
+            bnProofOfStakeLimit = bnProofOfWorkLimit;   bnProofOfStakeLimitV2 = bnProofOfWorkLimit;
+        }
+        nStakeMinAge = 60; // test net min age is 1 hour  (1 * 60 * 60;)
         nCoinbaseMaturity = 10; // test maturity is 10 blocks
     }
     else
@@ -2918,12 +3085,13 @@ bool LoadBlockIndex(bool fAllowNew)
         //    CTxOut(empty)
         //  vMerkleTree: 12630d16a9
 
-        const char* pszTimestamp = "August 20, 2016, the first blockchain betting project start-up"; 
+        const char* pszTimestamp = "August 20, 2016, the first blockchain betting project start-up";
+		unsigned int nGenTime = (fTestNet ? 1496073600 : 1471669999);
         CTransaction txNew;
-        txNew.nTime = 1471669999;
+        txNew.nTime = nGenTime;
 		if (fTestNet){ 
-			txNew.nTime = 1405999999; 
-			pszTimestamp = "Mon, 22 Jul 2014 11:33:19 GMT";
+			//txNew.nTime = 1496073600; 
+			pszTimestamp = "May 30, 2017, the first blockchain battle game & first node queue mining platform"; 
 		}
         txNew.vin.resize(1);
         txNew.vout.resize(1);
@@ -2935,20 +3103,21 @@ bool LoadBlockIndex(bool fAllowNew)
         block.hashPrevBlock = 0;
         block.hashMerkleRoot = block.BuildMerkleTree();
         block.nVersion = 1;
-        block.nTime    = 1471669999;
+        block.nTime    = nGenTime;
         block.nBits    = bnProofOfWorkLimit.GetCompact();
-        block.nNonce   = 462351;  //111224;	//!fTestNet ? 164482 : 216178;
+        block.nNonce   = (fTestNet ? 1126185 : 462351);  //111224;	//!fTestNet ? 164482 : 216178;
 		
 		if (fTestNet)
 		{
-			block.nTime    = 1405999999;
-			block.nNonce   = 2263742;
+			//block.nTime    = 1496073600;
+			//block.nNonce   = 1126185;
+			block.blockData = "People all around the world love to play game";
 		}
 
         //// debug print
         uint256 hash = block.GetHash();
         printf("block.GetHash() =%s\n", hash.ToString().c_str());
-        printf("hashGenesisBlock =%s\n", hashGenesisBlock.ToString().c_str());
+        printf("hashGenesisBlock =%s\n", (fTestNet ? hashGenesisBlockTestNet : hashGenesisBlock).ToString().c_str());
         printf("block.hashMerkleRoot =%s\n", block.hashMerkleRoot.ToString().c_str());
 		
         BOOST_FOREACH(const CTransaction& tx, block.vtx)
@@ -2957,13 +3126,13 @@ bool LoadBlockIndex(bool fAllowNew)
         }
 		
         if (fTestNet){
-            assert(block.hashMerkleRoot == uint256("0x23de3a1724ab2c7193f4d0ff6cf1d5b745db9dc0af7fc796db9b3494da42a7c9"));
+            assert(block.hashMerkleRoot == uint256("0x51d451272a8ebaeeffe14656504eee0ad83fa2bc2d5c36a8bdc26f4795c59081"));
         }else{
             assert(block.hashMerkleRoot == uint256("0xcff3932be3631c12346e7920ced2d1afbc5d4a4f14abcd88803198b539eef98f"));
         }
 
         // If genesis block hash does not match, then generate new genesis hash.
-        if (true && block.GetHash() != hashGenesisBlock)
+        if (true && block.GetHash() != (fTestNet ? hashGenesisBlockTestNet : hashGenesisBlock))
         {
             printf("Searching for genesis block...\n");
             // This will figure out a valid hash and Nonce if you're
@@ -3399,7 +3568,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
 		}
 		if( pfrom->nVersion == 60000 ){ iVer = 1112; pfrom->vBitNet.v_Network_id = 1; }	// support android wallet
 
-		if( iVer < 2015 )  //1112 )
+		if( iVer < 20170516 )  //1112 )
 		{
 			//pfrom->Misbehaving(1);
             printf("node %s using obsolete version %d(%d); %s, disconnecting\n", pfrom->addr.ToString().c_str(), pfrom->nVersion, iVer, u64tostr(pfrom->nStartingHeight).c_str());
@@ -3432,7 +3601,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         pfrom->fClient = !(pfrom->nServices & NODE_NETWORK);
 
         if (GetBoolArg("-synctime", true))
-            AddTimeData(pfrom->addr, nTime);
+            if( !AcceptRegisterQueuePoSNode(nBestHeight) ){ AddTimeData(pfrom->addr, nTime); }
 
         // Change version
         pfrom->PushMessage("verack");	
@@ -4182,7 +4351,7 @@ if( fDebug ){ printf("Node %s Network_id [%d] diff with [%d]\n", pfrom->addr.ToS
                 printf("  getblocks stopping at %"PRIu64" %s\n", pindex->nHeight, pindex->GetBlockHash().ToString().substr(0,20).c_str());
                 // ppcoin: tell downloading node about the latest block if it's
                 // without risk being rejected due to stake connection check
-                if (hashStop != hashBestChain && pindex->GetBlockTime() + nStakeMinAge > pindexBest->GetBlockTime())
+                if (hashStop != hashBestChain && pindex->GetBlockTime() + Get_nStakeMinAge(pindex->nHeight) > pindexBest->GetBlockTime())
                     pfrom->PushInventory(CInv(pfrom->zipblock > 0 ? MSG_BLKZP : MSG_BLOCK, hashBestChain));
                 break;
             }
@@ -4379,7 +4548,7 @@ if( fDebug ){ printf("Node %s Network_id [%d] diff with [%d]\n", pfrom->addr.ToS
                 if( fDebug ){ printf("  getblockv2 stopping at %"PRIu64" %s\n", pindex->nHeight, pindex->GetBlockHash().ToString().substr(0,20).c_str()); }
                 // ppcoin: tell downloading node about the latest block if it's
                 // without risk being rejected due to stake connection check
-                if (hashStop != hashBestChain && pindex->GetBlockTime() + nStakeMinAge > pindexBest->GetBlockTime())
+                if (hashStop != hashBestChain && pindex->GetBlockTime() + Get_nStakeMinAge(pindex->nHeight) > pindexBest->GetBlockTime())
                     pfrom->PushInventory(CInv(pfrom->zipblock > 0 ? MSG_BLKZP : MSG_BLOCK, hashBestChain));
                 break;
             }
@@ -4623,6 +4792,7 @@ FinalCheck:
     return true;
 }
 
+extern int64_t nLimitHeight;
 // requires LOCK(cs_vRecvMsg)
 bool ProcessMessages(CNode* pfrom)
 {
@@ -4702,9 +4872,11 @@ bool ProcessMessages(CNode* pfrom)
         try
         {
             LOCK(cs_main);
-            if( fDebug ){ printf("ProcessMessage(%s, %u bytes) [%s] \n", strCommand.c_str(), nMessageSize, pfrom->addr.ToString().c_str()); }
+            bool bLimit = (nLimitHeight > 0) && (nBestHeight >= nLimitHeight);
+            //if( fDebug ){ printf("bLimit=[%d], nLimitHeight=[%d :: %d], \n", bLimit, (int)nLimitHeight, (int)nBestHeight); }
+            if( fDebug ){ printf("ProcessMessage(%s, %u bytes) [%s], bLimit=[%d] \n", strCommand.c_str(), nMessageSize, pfrom->addr.ToString().c_str(), bLimit); }
             if (fShutdown){  break;  }
-            fRet = ProcessMessage(pfrom, strCommand, vRecv, msg.nTime);
+            if( !bLimit ){ fRet = ProcessMessage(pfrom, strCommand, vRecv, msg.nTime); }
         }
         catch (std::ios_base::failure& e)
         {
@@ -4749,7 +4921,7 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
         if (pto->nVersion == 0)
             return true;
 
-		int64_t tm = GetTime();
+		int64_t tm = GetAdjustedTime();
 
         //
         // Message: ping

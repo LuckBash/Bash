@@ -38,7 +38,7 @@ using namespace boost;
 #define BLOCK_NO_12W 120000
 const std::string BitBet_Magic("BitBet:");
 const std::string BitBet_CMD_Magic("BitBetCMD:");
-const string BitBetBurnAddress = "B4T5ciTCkWauSqVAcVKy88ofjcSasUkSYU";
+const string BitBetBurnAddress("B4T5ciTCkWauSqVAcVKy88ofjcSasUkSYU");
 const string strBitNetLotteryMagic = "BitLottery:";
 const int BitBetBeginEndBlockSpace_10 = 10;
 const int64_t BitBet_Mini_Amount = 10;  //MIN_TXOUT_AMOUNT;   // 100 * COIN
@@ -50,9 +50,11 @@ int dwBitNetLotteryStartBlock = 320;
 int BitNetLotteryStartTestBlock_286000 = 123;
 int64_t BitNet_Lottery_Create_Mini_Amount = 10 * COIN;   //MIN_TXOUT_AMOUNT;
 int64_t MIN_Lottery_Create_Amount = 10 * COIN;   //MIN_TXOUT_AMOUNT;
-bool bBitBetSystemWallet = false, bLuckChainRollbacking=false;
+bool bBitBetSystemWallet = false, bLuckChainRollbacking=false, bSystemNodeWallet=false;
 int iRecordPlayerInfo = 0;   // 2016.11.23 add
 CCriticalSection cs_bitbet;  // 2017.04.30 add
+CCriticalSection cs_queue_mining;  // 2017.05.30 add
+int nLockQueueNodeCoinTime = 60 * 24;  // 24 hours
 extern string s_Current_Dir;
 
 extern bool verifyMessage(const string strAddress, const string strSign, const string strMessage);
@@ -72,6 +74,20 @@ string explainOXNums(int iBetLen, const string sBetNum, const string sBlkHash);
 boost::signals2::signal<void (uint64_t nBlockNum, uint64_t nTime)> NotifyReceiveNewBlockMsg;
 boost::signals2::signal<void (const BitBetPack& bbp)> NotifyReceiveNewBitBetMsg;
 boost::signals2::signal<void (int opc, const std::string nickName, const std::string coinAddr, const std::string sFee, const std::string maxBetCoin)> NotifyaddLuckChainRefereeMsg5Param;
+boost::signals2::signal<void (int opcode, const std::string sTx)> NotifyQueueNodeMsg;
+
+std::string GetNewCoinAddress(const string strAccount)
+{
+    if (!pwalletMain->IsLocked())
+        pwalletMain->TopUpKeyPool();
+
+    // Generate a new key that is added to wallet
+    CPubKey newKey;
+    if (!pwalletMain->GetKeyFromPool(newKey, false)) return "";   //throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
+    CKeyID keyID = newKey.GetID();
+    if( strAccount.length() > 0 ){ pwalletMain->SetAddressBookName(keyID, strAccount); }
+    return CBitcoinAddress(keyID).ToString();
+}
 
 bool isSystemAddress(const string sAddr)
 {
@@ -102,11 +118,11 @@ std::string signMessageAndRztNotInclude(const string strAddress, const string st
 	return rzt;
 }
 
-int strToInt(const char *s, int iBase)
+int strToInt(const char *s, int iBase=10)
 {
    return strtol(s, NULL, iBase);	
 }
-int strToInt(const string s, int iBase)
+int strToInt(const string s, int iBase=10)
 {
    return strtol(s.c_str(), NULL, iBase);
 }
@@ -121,16 +137,12 @@ uint64_t strToInt64(const string s, int iBase)
 }
 uint64_t strToInt64(const char *s)
 {
-  uint64_t i;
-  char c ;
+  uint64_t i=0;      char c ;
+  if( !s ){ return i; }
   int scanned = sscanf(s, "%" SCNu64 "%c", &i, &c);
-  if (scanned == 1) return i;
-  if (scanned > 1) {
-    // TBD about extra data found
-    return i;
-    }
-  // TBD failed to scan;  
-  return 0;  
+  if (scanned == 1){ return i; }
+  if (scanned > 1) { return i; }  // TBD about extra data found
+  return 0;  // TBD failed to scan;  
 }
 
 struct BitBetBossPack{
@@ -366,6 +378,7 @@ sqlite3 *dbLuckChainRead2 = NULL;
 sqlite3 *dbLuckChainWrite = NULL;
 sqlite3 *dbLuckChainGui = NULL;
 sqlite3 *dbLuckChainGu2 = NULL;
+sqlite3 *dbQueueMining = NULL;
 
 void closeLuckChainDB()
 {
@@ -376,6 +389,7 @@ void closeLuckChainDB()
     if( dbLuckChainWrite ) sqlite3_close(dbLuckChainWrite);
     if( dbLuckChainGui ) sqlite3_close(dbLuckChainGui);
 	if( dbLuckChainGu2 ) sqlite3_close(dbLuckChainGu2);
+	if( dbQueueMining ) sqlite3_close(dbQueueMining);
 }
 
 static int selectCallback(void *data, int argc, char **argv, char **azColName)
@@ -417,6 +431,7 @@ std::string getDbNameByPtr(void *ptr)
 	else if( ptr == dbLuckChainWrite ){ rzt = "dbLuckChainWrite"; }
 	else if( ptr == dbLuckChainGui ){ rzt = "dbLuckChainGui"; }
 	else if( ptr == dbLuckChainGu2 ){ rzt = "dbLuckChainGu2"; }
+	else if( ptr == dbQueueMining ){ rzt = "dbQueueMining"; }
 	return rzt;
 }
 int dbBusyCallback(void *ptr, int count)    //  Database connection,      Number of times table has been busy
@@ -520,6 +535,27 @@ string buildCreatAllBetsTableStr(string sName)
 					",[oneAddrMaxBetAmount] bigint DEFAULT 0, [enCashFlag] int DEFAULT 0, [uniqueNumber] int DEFAULT 0"
                      ");";	
 	return sql;
+}
+void buildNodesDb()
+{
+   string sql = "Create TABLE Nodes ([id] integer PRIMARY KEY AUTOINCREMENT"
+					",[nick] varchar(32) UNIQUE NOT NULL"
+					",[inblock] bigint DEFAULT 0"
+					",[coinaddr] varchar(34) UNIQUE NOT NULL"
+					",[tx] varchar(64) UNIQUE NOT NULL"
+					",[payid] int DEFAULT 0"
+					",[gotblks] bigint DEFAULT 0"
+					",[lost] bigint DEFAULT 0"
+					",[clrlost] bigint DEFAULT 0"
+					",[lockdays] int DEFAULT 0"
+					",[unlockblk] bigint DEFAULT 0"
+					",[lastblktm] bigint DEFAULT 0"
+					",[confirm] int DEFAULT 0"
+					",[regtm] bigint DEFAULT 0);";
+   char* pe = 0;
+   int rc = sqlite3_exec(dbQueueMining, sql.c_str(), NULL, NULL, &pe);
+   if( fDebug ){ printf("buildNodesDb :: [%s] \n [%d] [%s]\n", sql.c_str(), rc, pe); }
+   if( pe ){ sqlite3_free(pe);    pe=0; }
 }
 void buildLuckChainDb()
 {
@@ -705,8 +741,13 @@ bool ReadOrWriteLuckChainBackupInfoToDB(bool bRead)
 	return rzt;
 }
 
+const string BitBetBurnAddressTest("mkBRk7uf2EfEBFweiij3Gf9NqEBqT7k8Tb");
 int openSqliteDb()
 {
+   if( fTestNet )
+   {
+		char* p = (char*)BitBetBurnAddress.c_str();      memcpy(p, BitBetBurnAddressTest.c_str(), BitBetBurnAddress.length());   //BitNetLotteryStartTestBlock_286000 = 99;
+	}
    int  rc;
    //char *sql;
    int rcSafe = sqlite3_threadsafe();
@@ -718,10 +759,10 @@ int openSqliteDb()
 #endif
     sDataDbDir = GetDataDir().string();
 #ifdef WIN32
-   string sLuckChainDb = sDataDbDir + "\\luckchain.db",  sAllAddressDb = GetDataDir().string() + "\\alladdress.db";
+   string sLuckChainDb = sDataDbDir + "\\luckchain.db",  sAllAddressDb = GetDataDir().string() + "\\alladdress.db", sNodesDb="nodes.db";
    std::replace( sLuckChainDb.begin(), sLuckChainDb.end(), '\\', '\x2f'); // replace all '\' to '/'
 #else
-   string sLuckChainDb = sDataDbDir + "/luckchain.db",  sAllAddressDb = GetDataDir().string() + "/alladdress.db";
+   string sLuckChainDb = sDataDbDir + "/luckchain.db",  sAllAddressDb = sDataDbDir + "/alladdress.db", sNodesDb = sDataDbDir + "/nodes.db";
 #endif
 
     if( ReadOrWriteLuckChainBackupInfoToDB(true) )   // 2017.04.12 add
@@ -750,14 +791,17 @@ int openSqliteDb()
 
 //if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=[%d]  \n", rcSafe, pLuckChainDb, bAllBetsExist); }
    /* Open database */
-   rc = sqlite3_open(pLuckChainDb, &dbLuckChainWrite);
+    rc = sqlite3_open(sNodesDb.c_str(), &dbQueueMining);
+	bool bAllBetsExist = isTableExists("Nodes", dbQueueMining);
+	if( !bAllBetsExist ){ buildNodesDb(); }
 
-	bool bAllBetsExist = isTableExists("AllBets", dbLuckChainWrite);
+    rc = sqlite3_open(pLuckChainDb, &dbLuckChainWrite);
+	bAllBetsExist = isTableExists("AllBets", dbLuckChainWrite);
 	if( !bAllBetsExist )
 	{
 		buildLuckChainDb();
 	}
-    if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=[%d]  \n", rcSafe, pLuckChainDb, bAllBetsExist); }
+    if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=[%d]  BitBetBurnAddress=[%s] \n", rcSafe, pLuckChainDb, bAllBetsExist, BitBetBurnAddress.c_str()); }
 	if( fDebug ){ printf("i6BackupLuckChainDb_BlkNum=[%s], sBackupLuckChainDbFn=[%s] \n", i64tostr(i6BackupLuckChainDb_BlkNum).c_str(), sBackupLuckChainDbFn.c_str()); }
 
    string sql = "SELECT * from Settings;";
@@ -859,57 +903,6 @@ int openSqliteDb()
    sqlite3_busy_handler(dbLuckChainWrite, dbBusyCallback, (void *)dbLuckChainWrite);
    sqlite3_busy_handler(dbLuckChainGui, dbBusyCallback, (void *)dbLuckChainGui);   sqlite3_busy_handler(dbLuckChainGu2, dbBusyCallback, (void *)dbLuckChainGu2);
 
-   // Create SQL statement
-   /* sql = "SELECT Count(*) from Addresss where id < 10";  //"SELECT * from Keys";
-   // Execute SQL statement
-   int64_t icnt = 0;
-   rc = sqlite3_exec(dbAllAddress, sql, selectCountCallback, (void*)&icnt, &zErrMsg);
-   if( rc != SQLITE_OK ){
-      printf("SQL error: %s\n", zErrMsg);
-      sqlite3_free(zErrMsg);
-   }else{
-      printf("Query done, count = [%I64u]\n", icnt);
-   } */
-
-/*
-   const char* data = "Callback function called";
-   //sql = "SELECT Count(*) from City where ID < 11";  //"SELECT * from Keys";
-   sql = "SELECT * from City where ID < 6";  //"SELECT * from Keys";
-   // Execute SQL statement 
-   rc = sqlite3_exec(dbAllAddress, sql, selectCallback, (void*)data, &zErrMsg);
-   if( rc != SQLITE_OK ){
-      printf("SQL error: %s\n", zErrMsg);
-      sqlite3_free(zErrMsg);
-   }else{
-      printf("Operation done successfully\n");
-   }
-   
-   sqlite3 *db;
-   rc = sqlite3_open("test.db", &db);
-   if( rc ){
-      printf("Can't open database: %s\n", sqlite3_errmsg(db));
-      return(0);
-   }else{
-      printf("Opened database successfully\n");
-   }
-
-   // Create SQL statement 
-   sql = "CREATE TABLE COMPANY("  \
-         "ID INT PRIMARY KEY     NOT NULL," \
-         "NAME           TEXT    NOT NULL," \
-         "AGE            INT     NOT NULL," \
-         "ADDRESS        CHAR(50)," \
-         "SALARY         REAL );";
-
-   // Execute SQL statement 
-   rc = sqlite3_exec(db, sql, sqliteCallback, 0, &zErrMsg);
-   if( rc != SQLITE_OK ){
-   printf("SQL error: %s\n", zErrMsg);
-      sqlite3_free(zErrMsg);
-   }else{
-      printf("Table created successfully\n");
-   }
-   sqlite3_close(db);  */
 if( fDebug ){ printf("<--- openSqliteDb \n"); }
    return 0;
 }
@@ -1059,7 +1052,10 @@ int getRunSqlResultCount(sqlite3 *dbOne, const string sql, uint64_t &rzt)
 uint64_t getAliveLaunchBetCountCore( sqlite3 *dbOne, const std::string sBettor, bool bJustRcvTx, int iOpCode, int iBetType, bool bOnlyJustRcvTx )
 {
    uint64_t rzt = 0;
-   string sql = "SELECT Count(*) from AllBets where opcode=" + inttostr(iOpCode) + " and done=0";
+   string sql = "SELECT Count(*) from AllBets where opcode";
+   if( iOpCode >= 0 ){ sql = sql + "=" + inttostr(iOpCode); }
+   else{ sql = sql + ">0"; }
+   sql = sql + " and done=0";
    if( iBetType >= 0 ){ sql = sql + " and bet_type=" + inttostr(iBetType); }
    if( sBettor.length() < 33 ){ sql = sql + ";"; }
    else{ sql = sql + " and bettor='" + sBettor + "';"; }
@@ -1074,6 +1070,7 @@ uint64_t getAliveLaunchBetCountCore( sqlite3 *dbOne, const std::string sBettor, 
 		rc = sqlite3_exec(dbOne, sql.c_str(), selectCountCallback, (void*)&u6zt, NULL);
 		if( rc == SQLITE_OK ){  rzt = rzt + u6zt;  }
 	}
+	if( fDebug ) printf("getAliveLaunchBetCountCore:: rzt=[%s], sql [%s] \n", u64tostr(rzt).c_str(), sql.c_str());
    return rzt;
 }
 uint64_t getAliveLaunchBetCount( sqlite3 *dbOne, const string sBettor, bool bJustRcvTx )
@@ -2279,6 +2276,25 @@ bool isCanntSpendAddress(const CTxOut txout)
 	return rzt;
 }
 
+bool GetTxOutCoinAddrAndAmoutByOutId(const string sCallFrom, const CTransaction& tx, int outId, string& sRztAddr, uint64_t& nRztValue)
+{
+	bool rzt = false;     int iOutSz = tx.vout.size();
+	if( iOutSz > outId )  //if( IsFinalTx(tx, nBestHeight + 1) )
+	{
+		const CTxOut& txout = tx.vout[outId];     nRztValue = txout.nValue;
+		txnouttype type;     vector<CTxDestination> addresses;     int nRequired;
+		if( ExtractDestinations(txout.scriptPubKey, type, addresses, nRequired) )
+		{
+			BOOST_FOREACH(const CTxDestination& addr, addresses)
+			{
+				sRztAddr = CBitcoinAddress(addr).ToString();     rzt = true;
+			}
+		}
+	}
+	if( fDebug ){ printf("%s Call GetTxOutCoinAddrAndAmoutByOutId() :: rzt=[%d], outId=[%d], tx.vout.size()=[%d], nRztValue=[%f], sRztAddr=[%s], tx=[%s]\n", sCallFrom.c_str(), rzt, outId, iOutSz, (double)(nRztValue / COIN), sRztAddr.c_str(), tx.GetHash().ToString().c_str()); }
+	return rzt;
+}
+
 int  GetCoinAddrInTxOutIndex(const CTransaction& tx, string sAddr, uint64_t v_nValue, int iCmpType)
 {
 	int rzt = -1;
@@ -2337,17 +2353,17 @@ int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_nValue,
 	return rzt;
 }
 
-int GetTxBitBetCmdParamFromStr(const std::string betStr, BitBetCommand &bbc)
+int SplitCmdParamFromStr(const std::string betStr, BitBetCommand &bbc, const string cmdHeader, char *delim)
 {
 	int rzt = 0;
 	string stxData = "";
 	int iLen = betStr.length();   if( iLen > MAX_BitBet_Str_Param_Len ){ return rzt; }
 	if( betStr.length() > 0 ){ stxData = betStr.c_str(); }
-	if( (stxData.length() > 13) && (stxData.find(BitBet_CMD_Magic) == 0) )   //  "BitBetCMD:"
+	if( (stxData.length() > 13) && (stxData.find(cmdHeader) == 0) )   //  BitBet_CMD_Magic = "BitBetCMD:"
 	{
 		int i = 0;
 		try{
-		char *delim = "|";    //double dv = 0;
+		//char *delim = "|";    //double dv = 0;
 					
 		char * pp = (char *)stxData.c_str();
         char *reserve;
@@ -2355,7 +2371,7 @@ int GetTxBitBetCmdParamFromStr(const std::string betStr, BitBetCommand &bbc)
 		while (pch != NULL)
 		{
 			i++;
-			//if( fDebug ){ printf("GetTxBitBetCmdParamFromStr:: [%s] \n", pch); }
+			//if( fDebug ){ printf("SplitCmdParamFromStr:: [%s] \n", pch); }
 			if( i == 2 ){ bbc.cmdName = pch; }
 			else if( i == 3 ){ bbc.p1 = pch; }
 			else if( i == 4 ){ bbc.p2 = pch; }
@@ -2372,11 +2388,16 @@ int GetTxBitBetCmdParamFromStr(const std::string betStr, BitBetCommand &bbc)
 			pch = strtok_r(NULL, delim, &reserve);
 		}
 		}catch (std::exception &e) {
-			printf("GetTxBitBetCmdParamFromStr:: err [%s]\n", e.what());
+			printf("SplitCmdParamFromStr:: err [%s]\n", e.what());
 		}
 		rzt = i;
 	}
 	bbc.paramCount = rzt;    return rzt;
+}
+
+int GetTxBitBetCmdParamFromStr(const std::string betStr, BitBetCommand &bbc)
+{
+    return SplitCmdParamFromStr(betStr, bbc, BitBet_CMD_Magic, "|");
 }
 int unsigatoi(const char* s)
 {
@@ -2521,9 +2542,10 @@ bool isValidBitBetGenesisTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack 
 		if( !address.IsValid() ){ if( fDebug ){ printf("isValidBitBetGenesisTx: referee [%s] unvalid \n", bbp.referee.c_str());  return rzt;  } }
 	}
 	else if( (bbp.betType == 2) || (bbp.betType == 4) ){  // 2016_10_15 add, check banker
-		if( isBankerMode && (bbp.u6BetAmount < Mini_Banker_Bet_Amount) )
+	    uint64_t u6a = getMini_Banker_Bet_Amount(iTxHei);  // 2017.05.26 add
+		if( isBankerMode && (bbp.u6BetAmount < u6a) )
 		{
-			if( fDebug ) printf("isValidBitBetGenesisTx :: Banker mode [%s], Amount [%s] < Mini_Banker_Bet_Amount [%u] :(\n", bbp.refereeNick.c_str(), u64tostr(bbp.u6BetAmount).c_str(), Mini_Banker_Bet_Amount);
+			if( fDebug ) printf("isValidBitBetGenesisTx :: Banker mode [%s], Amount [%s] < Mini_Banker_Bet_Amount [%s] :(\n", bbp.refereeNick.c_str(), u64tostr(bbp.u6BetAmount).c_str(), u64tostr(u6a).c_str());
 			return rzt;
 		}
 	}
@@ -3810,8 +3832,8 @@ extern int rollBackToBlock(int64_t nBlockNum, CTxDB &txdb, bool bLock);
 void updateNewBestBlkNum(int64_t blkNum)
 {
     string sql = strprintf("update Settings set best_blknum=%s;", i64tostr(blkNum).c_str());      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
-	if( fDebug ){ printf("updateNewBestBlkNum(%s):: i6BackupLuckChainDb_BlkNum=[%s], sBackupLuckChainDbFn=[%s] \n", i64tostr(blkNum).c_str(), i64tostr(i6BackupLuckChainDb_BlkNum).c_str(), sBackupLuckChainDbFn.c_str()); }
-	bool bAutoRest = GetArg("-autobackupdb", 1) > 0;
+	//if( fDebug ){ printf("updateNewBestBlkNum(%s):: i6BackupLuckChainDb_BlkNum=[%s], sBackupLuckChainDbFn=[%s] \n", i64tostr(blkNum).c_str(), i64tostr(i6BackupLuckChainDb_BlkNum).c_str(), sBackupLuckChainDbFn.c_str()); }
+	bool bAutoRest = GetArg("-autobackupdb", 0) > 0;
 	if( bAutoRest && (blkNum > 100000) && (blkNum > i6BackupLuckChainDb_BlkNum) )
 	{
 		int64_t i6 = i6BackupLuckChainDb_BlkNum + (3 * 60);  //(60 * 24);
@@ -3852,4 +3874,544 @@ bool rollBackBlocksAndLuckChainDb(CTxDB &txdb, bool bForce)
 bool rollBackBlocksAndLuckChainDb(bool bForce)
 {
     CTxDB txdb;   return rollBackBlocksAndLuckChainDb(txdb, bForce);
+}
+
+
+
+
+
+// Queue PoS
+int64_t GetQueuePoSRulesActiveHeight()
+{
+    return (fTestNet ? Queue_PoS_Rules_Acitve_Height_Test : Queue_PoS_Rules_Acitve_Height);
+}
+
+string GetSystemNodeById(int id)
+{
+    if( id == 1 ){ return (fTestNet ? "mosd3MhiW4CwcP58c2wdTtC6thXGck26mZ" : "BNbuur26wqJDH5JeKyN8q9b3u5jFG8fxzt"); }
+    else if( id == 2 ){ return (fTestNet ? "mh2wDwFySmP41Kv6qERgx69PtZCFUPXvPa" : "BLPimaos8mHooaaVsMNziU85Pm92k9t6CW"); }
+    else if( id == 3 ){ return (fTestNet ? "mzmVatwtAJM6RRCs3BYask8DMYD7jgFED8" : "B9SqeMBvgYQQ5v9pZv3WhSSfBZsGU1BQGW"); }
+    else if( id == 4 ){ return (fTestNet ? "mxp1BXxdcASG7HDbc7v4Wq8NCefhdjAEG1" : "BMh5DdJKP6Q6i9qA7RPAjbsxF3p4ZHcCAK"); }
+    else if( id == 5 ){ return (fTestNet ? "mfizwT1WuhmavT1Uhwu4Fu1XA7F7bjoBXC" : "BS84eHn684cdM7n5pGhEJS5YxbFcMtCTSB"); }
+    else if( id == 6 ){ return (fTestNet ? "mspPHkP8ayN943nbEqPj939fDEDejwAuiC" : "BJtiVN4xkWHGmB9Pizvu7K4Vgvb5Jc85h5"); }
+}
+
+string strAllSystemNode="";
+string GetSystemNodes()
+{
+    if( strAllSystemNode.length() < 34 ){ strAllSystemNode = GetSystemNodeById(1) + "," + GetSystemNodeById(2) + "," + GetSystemNodeById(3) + "," + GetSystemNodeById(4) + "," + GetSystemNodeById(5) + "," + GetSystemNodeById(6); }
+	return strAllSystemNode;
+}
+
+bool isSystemNodeWallet()
+{
+    string s1 = GetSystemNodeById(1), s2 = GetSystemNodeById(2), s3 = GetSystemNodeById(3), s4 = GetSystemNodeById(4),  s5 = GetSystemNodeById(5),  s6 = GetSystemNodeById(6);
+	bool rzt = isMineCoinAddress(s1) || isMineCoinAddress(s2) || isMineCoinAddress(s3) || isMineCoinAddress(s4) || isMineCoinAddress(s5) || isMineCoinAddress(s6);
+	return rzt;
+}
+
+bool IsSystemNode(const string sCoinAddr)
+{
+    string sNodes = GetSystemNodes();
+	return (sNodes.find(sCoinAddr) != string::npos);
+}
+
+int64_t GetPerDayLockBlocks()
+{
+    return ( fTestNet ? 60 : 1440 );
+}
+bool insertQueueNode(int64_t inBlock, int iLockDays, string sNick, string coinAddr, string tx, int payIdx, int64_t regTime)
+{
+   bool rzt = false;
+   LOCK(cs_queue_mining);  // 2017.05.30
+   if( iLockDays <= 0 ){ iLockDays = 1; }
+   int64_t i6BlkSpace=inBlock, i6RuleHei = GetQueuePoSRulesActiveHeight();
+   if( inBlock < i6RuleHei ){ i6BlkSpace = i6RuleHei; }
+   int64_t unlockBlk = (GetPerDayLockBlocks() * iLockDays) + i6BlkSpace;
+   string s = "'" + sNick + "', " + i64tostr(inBlock) + ", " + inttostr(iLockDays) + ", " + i64tostr(unlockBlk) + ", '" + coinAddr + "', '" + tx + "', " + inttostr(payIdx) + ", 0, " + i64tostr(regTime);
+   string sql = "INSERT INTO Nodes (nick, inblock, lockdays, unlockblk, coinaddr, tx, payid, confirm, regtm) VALUES (" + s + ");";
+   char* pe = 0;
+   int rc = sqlite3_exec(dbQueueMining, sql.c_str(), 0, 0, &pe);      rzt = (rc == SQLITE_OK);
+   if( fDebug ){ printf("insertQueueNode :: [%d] [%s] [%s]\n", rc, pe, sql.c_str()); }
+   if( pe ){ sqlite3_free(pe); }
+   return rzt;
+}
+
+bool deleteQueueNode(const string tx, int payIdx)
+{
+	bool rzt=false;   int iLen = tx.length();
+	if( iLen > 33 )
+	{
+	    LOCK(cs_queue_mining);  // 2017.05.30
+	    string sql = "DELETE FROM Nodes where ";  //gen_bet='" + tx + "' and confirmed<1 and opcode=1;";
+		if( iLen == 34 ){ sql = sql + "coinaddr='" + tx + "'"; }
+		else{ sql = sql + "tx='" + tx + "'"; }
+		if( payIdx >= 0 ){ sql = sql + " and payid=" + inttostr(payIdx); }
+		sql = sql + ";";
+	    int rc = sqlite3_exec(dbQueueMining, sql.c_str(), NULL, NULL, NULL);   rzt = (rc == SQLITE_OK);
+	    if( fDebug ){ printf("deleteQueueNode() :: return [%d], [%s] \n", rzt, sql.c_str()); }
+	}
+	return rzt;
+}
+
+uint64_t GetQueueNodeRegInBlocks(const string tx, int payIdx)
+{
+	uint64_t rzt=0;   int iLen = tx.length();
+	if( iLen < 34 ){ return rzt; }
+	LOCK(cs_queue_mining);  // 2017.05.30
+	string sql = "select * from Nodes where ";
+	if( iLen == 34 ){ sql = sql + "coinaddr='" + tx + "'"; }
+	else{ sql = sql + "tx='" + tx + "'"; }
+	if( payIdx >= 0 ){ sql = sql + " and payid=" + inttostr(payIdx); }
+	sql = sql + ";";
+	//if( fDebug ){ printf("checkUserWeight : [%s] \n", sql.c_str()); }
+	dbOneResultCallbackPack pack = {OneResultPack_U64_TYPE, 2, 0, 0, "inblock", ""};  // 2 = inblock
+	getOneResultFromDb(dbQueueMining, sql, pack);
+	if( pack.fDone > 0 ) { rzt = pack.u6Rzt; }
+	if( fDebug ){ printf("GetQueueNodeRegInBlocks() : rzt=[%s], [%s] \n", u64tostr(pack.u6Rzt).c_str(), sql.c_str()); }
+	return rzt;
+}
+/*
+   string sql = "Create TABLE Nodes ([id] integer PRIMARY KEY AUTOINCREMENT"
+					",[nick] varchar(32) UNIQUE NOT NULL"
+					",[inblock] bigint DEFAULT 0"
+					",[coinaddr] varchar(34) UNIQUE NOT NULL"
+					",[tx] varchar(64) UNIQUE NOT NULL"
+					",[payid] int DEFAULT 0"
+					",[gotblks] bigint DEFAULT 0"
+					",[lost] bigint DEFAULT 0"
+					",[clrlost] bigint DEFAULT 0"
+					",[lockdays] int DEFAULT 0"
+					",[unlockblk] bigint DEFAULT 0"
+					",[lastblktm] bigint DEFAULT 0";
+					",[confirm] int DEFAULT 0"
+					",[regtm] bigint DEFAULT 0);";
+*/
+uint64_t GetQueueNodeLockDays(const string sCallFrom, const string tx, int payIdx, bool bGetLockDays)
+{
+	uint64_t rzt = 0;   int iLen = tx.length();
+	if( iLen < 34 ){ return rzt; }
+	LOCK(cs_queue_mining);  // 2017.05.30
+	string sql = "select * from Nodes where ";
+	if( iLen == 34 ){ sql = sql + "coinaddr='" + tx + "'"; }
+	else{ sql = sql + "tx='" + tx + "'"; }
+	if( payIdx >= 0 ){ sql = sql + " and payid=" + inttostr(payIdx); }
+	sql = sql + ";";
+	dbOneResultCallbackPack pack = {OneResultPack_U64_TYPE, (bGetLockDays ? 9 : 10), 0, 0, (bGetLockDays ? "lockdays" : "unlockblk"), ""};
+	getOneResultFromDb(dbQueueMining, sql, pack);
+	if( pack.fDone > 0 ) { rzt = pack.u6Rzt; }
+	if( fDebug ){ printf("%s Call GetQueueNodeLockDays() : rzt=[%s], [%s] \n", sCallFrom.c_str(), u64tostr(pack.u6Rzt).c_str(), sql.c_str()); }
+	return rzt;
+}
+
+bool isQueueNodeExists(const string tx)
+{
+    uint64_t u6 = GetQueueNodeRegInBlocks(tx);
+	return u6 > 0;
+}
+
+bool isQueueNodeNickExists(const string sNick)
+{
+	bool rzt=false;
+	LOCK(cs_queue_mining);  // 2017.05.30
+	string sql = "select * from Nodes where nick='" + sNick + "';";
+	dbOneResultCallbackPack pack = {OneResultPack_U64_TYPE, 2, 0, 0, "inblock", ""};  // 2 = inblock
+	getOneResultFromDb(dbQueueMining, sql, pack);
+	if( pack.fDone > 0 ) { rzt = pack.u6Rzt > 0; }
+	if( fDebug ){ printf("isQueueNodeNickExists() : rzt=[%s], [%s] \n", u64tostr(pack.u6Rzt).c_str(), sql.c_str()); }
+	return rzt;
+}
+
+bool isQueueNodeNickOrAddrExists(const string sNick, const string sCoinAddr)
+{
+	bool rzt=false;
+	LOCK(cs_queue_mining);  // 2017.05.30
+	string sql = "select * from Nodes where nick='" + sNick + "' or coinaddr='" + sCoinAddr + "';";
+	dbOneResultCallbackPack pack = {OneResultPack_U64_TYPE, 2, 0, 0, "inblock", ""};  // 2 = inblock
+	getOneResultFromDb(dbQueueMining, sql, pack);
+	if( pack.fDone > 0 ) { rzt = pack.u6Rzt > 0; }
+	if( fDebug ){ printf("isQueueNodeNickOrAddrExists() : rzt=[%d] [%s], [%s] \n", rzt, u64tostr(pack.u6Rzt).c_str(), sql.c_str()); }
+	return rzt;
+}
+
+bool updateQueueNodeInfo(const string tx, const string newTx, int payIdx, int64_t lastblktm)
+{
+    LOCK(cs_queue_mining);  // 2017.05.30
+    string sql = "update Nodes set lastblktm=" + i64tostr(lastblktm) + ", payid=" + inttostr(payIdx) + ", gotblks=(gotblks+1), tx='" + newTx + "' where tx='" + tx + "';";
+	int rc = sqlite3_exec(dbQueueMining, sql.c_str(), NULL, 0, NULL);
+	if( fDebug ){ printf("updateQueueNodeInfo:: [%d] [%s] \n", rc, sql.c_str()); }
+	return (rc == SQLITE_OK);
+}
+
+int updateQueueNodeLostBlockCount(const string sMiner, int opc)
+{
+    LOCK(cs_queue_mining);  // 2017.05.30
+	string sOpc =  "lost+1", sClr="";
+	if( opc == 0 ){ sOpc = "0";      sClr = "clrlost=(clrlost+1), "; }
+	else if( opc == 2 ){ sOpc = "lost-1"; }
+    string sql = "update Nodes set " + sClr + "lost=(" + sOpc + ") where coinaddr='" + sMiner + "';";
+	int rc = sqlite3_exec(dbQueueMining, sql.c_str(), NULL, 0, NULL);
+	if( fDebug ){ printf("updateQueueNodeLostBlockCount:: rzt=[%d] [%s] \n", rc, sql.c_str()); }
+	return rc;
+}
+
+string getCurrentQueueMiner(bool bGetAddr)
+{
+    string rzt="";
+    LOCK(cs_queue_mining);  // 2017.05.30
+	//int64_t i6 = nBestHeight - 8;
+    // string sql = "select * from Nodes where lost<1 and inblock<" + i64tostr(i6) + " order by lastblktm asc, id asc limit 1;";
+    string sql = "select * from Nodes where lost<1 and confirm>9 order by lastblktm asc, id asc limit 1;";
+	dbOneResultCallbackPack pack = {OneResultPack_STR_TYPE, (bGetAddr ? 3 : 4), 0, 0, (bGetAddr ? "coinaddr" : "tx"), ""};  // 3 = coinaddr
+	getOneResultFromDb(dbQueueMining, sql, pack);
+	if( pack.fDone > 0 ) { rzt = pack.sRzt; }
+	if( fDebug ){ printf("getCurrentQueueMiner:: rzt=[%s] [%s] \n", rzt.c_str(), sql.c_str()); }
+    return rzt;
+}
+
+/* int processTxInForQueueMining(const std::vector<CTxIn> vin)
+{
+    int rzt=0;
+	BOOST_FOREACH(const CTxIn& txin, vin)
+	{
+		if( txin.prevout.IsNull() ){ continue; }
+		uint256 hashBlock = 0;   CTransaction txPrev;
+		//if( fDebug ){ printf( "getTxinAddressAndAmount: txin.prevout.n = [%u], \n", txin.prevout.n ); }
+		if( GetTransaction(txin.prevout.hash, txPrev, hashBlock) )	// get the vin's previous transaction
+		{
+			sPreTargetAddr = "";
+			iAmnt = 0;
+			rzt = get_Txin_prevout_n_s_TargetAddressAndAmount(txPrev, txin.prevout.n, sPreTargetAddr, iAmnt);
+		}
+	}
+	return rzt;
+} */
+
+bool isValidRegQueueNodeTx(const CTransaction& tx, string& sCoinAddr, string& sNick, int& payIdx, int& iLockDays)
+{
+    bool rzt=false;   string sData = tx.chaindata.c_str();   payIdx=0;   iLockDays=1;
+    if( sData.length() < 55 ){ return rzt; }
+	//  "I Want To Register As A Node:BC3ZJJnM8s93nxY7zeL74RgxTd2t1t9RzX:Big Bash"
+	// sendtoaddresswithmsg mkx1UXiLezSJ3FLQ6TydobRw5oeFr8B3r9 1000000 "Register Queue Node:mkx1UXiLezSJ3FLQ6TydobRw5oeFr8B3r9:Gray"
+	// sendtoaddresswithmsg n3dAVpLSAbf4supyf2HFFD4T65eKSy4jUL 1000000 "Register Queue Node:n3dAVpLSAbf4supyf2HFFD4T65eKSy4jUL:Lucy:10"
+	// sendtoaddresswithmsg mj1fZZydq9LxpDLsBbsWXLKLVxajeResFE 1000000 "Register Queue Node:mj1fZZydq9LxpDLsBbsWXLKLVxajeResFE:James:30"
+    BitBetCommand bbc = {"", "", "", "", "", "", "", "", "", "", "", 0};   //sCoinAddr = sData.substr(29, 34);
+	if( SplitCmdParamFromStr(sData, bbc, strRegisterAsNodeMagic, ":") > 2 )
+	{
+		sCoinAddr = bbc.cmdName;   sNick = bbc.p1;      if( bbc.p2.length() > 0 ){ iLockDays = strToInt(bbc.p2, 10); }
+		payIdx = GetCoinAddrInTxOutIndex(tx, sCoinAddr, MIN_Queue_Node_AMOUNT);
+		rzt = payIdx >= 0;  // Check Bet Amount, =-1 is invalid
+		if( fDebug ){ printf( "isValidRegQueueNodeTx: tx data = [%s], rzt=[%d], [%s] [%s] \n", sData.c_str(), rzt, sCoinAddr.c_str(), sNick.c_str()); }
+	}
+	return rzt;
+}
+const string strResetQueueNodeLostBlockMagic = "Reset Queue Node:";
+bool resetQueueNodeLostBlkCount(const CTransaction& tx)
+{
+    bool rzt=false;   string sData = tx.chaindata.c_str();
+	// sendtoaddresswithmsg mj1fZZydq9LxpDLsBbsWXLKLVxajeResFE 1000000 "Reset Queue Node:mj1fZZydq9LxpDLsBbsWXLKLVxajeResFE:14xxxxx:sign str"
+	//  Reset Queue Node Lost Block:Miner_Address_1: Time_2 | Sign_3
+    BitBetCommand bbc = {"", "", "", "", "", "", "", "", "", "", "", 0};
+	if( SplitCmdParamFromStr(sData, bbc, strResetQueueNodeLostBlockMagic, ":") > 2 )
+	{
+		string sCoinAddr = bbc.cmdName, sTime = bbc.p1, sSign = bbc.p2, sMsg = sCoinAddr + "," + sTime;
+		if( verifyMessage(sCoinAddr, sSign, sMsg) )  // bool verifyMessage(const string strAddress, const string strSign, const string strMessage)
+		{
+		    rzt = (updateQueueNodeLostBlockCount(sCoinAddr, 0) == SQLITE_OK);
+		}
+		if( fDebug ){ printf( "resetQueueNodeLostBlkCount: tx data = [%s], rzt=[%d], [%s] [%s] \n", sData.c_str(), rzt, sCoinAddr.c_str(), sSign.c_str()); }
+	}
+	return rzt;
+}
+
+bool updateQueueNodesStatus()
+{
+    LOCK(cs_queue_mining);  // 2017.05.30
+    string sql = "update Nodes set confirm=(confirm+1) where confirm<10;";
+	int rc = sqlite3_exec(dbQueueMining, sql.c_str(), NULL, 0, NULL);
+	if( fDebug ){ printf("updateQueueNodesStatus() : [%d] [%s] \n", rc, sql.c_str()); }
+
+    //-- Auto quit  expired nodes,  unlockblk
+    int64_t i6 = nBestHeight + 1;
+    sql = "DELETE FROM Nodes where unlockblk<" + i64tostr(i6) + ";";
+	rc = sqlite3_exec(dbQueueMining, sql.c_str(), NULL, 0, NULL);
+	if( fDebug ){ printf("updateQueueNodesStatus() : [%d] [%s] \n", rc, sql.c_str()); }
+
+	NotifyQueueNodeMsg(1, "");
+	return (rc == SQLITE_OK);
+}
+
+// int SplitCmdParamFromStr(const std::string betStr, BitBetCommand &bbc, const string cmdHeader)
+bool processQueueMiningTx(const CTransaction& tx, int64_t iTxHei, bool bConnect, int64_t blkTime)
+{
+	bool rzt=false,  bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(iTxHei), bCoinStake = tx.IsCoinStake(), bAcceptRegNode=AcceptRegisterQueuePoSNode(iTxHei);
+	{
+		string sNick="", sCoinAddr="", sTx = tx.GetHash().ToString(), sData = tx.chaindata;     int payIdx=0, iLockDays=1;
+		bool bRegNode = (!bCoinStake) && isValidRegQueueNodeTx(tx, sCoinAddr, sNick, payIdx, iLockDays);  //  "Register Queue Node:BC3ZJJnM8s93nxY7zeL74RgxTd2t1t9RzX"
+		if( bConnect )
+		{
+			if( bRegNode )
+			{
+			    if( bAcceptRegNode && !isQueueNodeNickOrAddrExists(sNick, sCoinAddr) )
+				{
+				    if( insertQueueNode(iTxHei, iLockDays, sNick, sCoinAddr, sTx, payIdx, tx.nTime) ){ } //NotifyQueueNodeMsg(2, sTx); }
+				}
+			}
+			else if( bQPoS_Rules_Actived ){ resetQueueNodeLostBlkCount(tx); }
+			if( bQPoS_Rules_Actived )
+			{
+				if( bCoinStake )
+				{
+					const CTxIn& txin = tx.vin[0];
+					uint256 hashBlock = 0;   CTransaction txPrev;
+					if( fDebug ){ printf( "processQueueMiningTx: tx.IsCoinStake=true, txin.prevout.n=[%d] \n", txin.prevout.n); }
+					if( GetTransaction(txin.prevout.hash, txPrev, hashBlock) )	// get the vin's previous transaction
+					{
+						string sTxPrev = txPrev.GetHash().ToString();
+						if( fDebug ){ printf( "processQueueMiningTx: tx.IsCoinStake=true, txPrev = [%s], \n", sTxPrev.c_str() ); }
+						if( updateQueueNodeInfo(sTxPrev, sTx, 1, blkTime) ){ NotifyQueueNodeMsg(3, sTxPrev); }  //if( updateQueueNodeInfo(sTxPrev, sTx, txin.prevout.n, blkTime) ){ NotifyQueueNodeMsg(3, sTxPrev); }
+					}else{ printf( "processQueueMiningTx: IsCoinStake, GetTransaction() failed :( \n"); }
+				}else{
+				BOOST_FOREACH(const CTxIn& txin, tx.vin)
+				{
+					if( txin.prevout.IsNull() ){ continue; }
+					uint256 hashBlock = 0;   CTransaction txPrev;
+					if( fDebug ){ printf( "processQueueMiningTx: tx.IsCoinStake=false, txin.prevout.n = [%u], \n", txin.prevout.n ); }
+					if( GetTransaction(txin.prevout.hash, txPrev, hashBlock) )	// get the vin's previous transaction
+					{
+						string sTxPrev = txPrev.GetHash().ToString();
+						if( fDebug ){ printf( "processQueueMiningTx: txPrev = [%s], \n", sTxPrev.c_str() ); }
+						if( deleteQueueNode(sTxPrev, txin.prevout.n) ){ NotifyQueueNodeMsg(0, sTxPrev); }
+					}else{ printf( "processQueueMiningTx: GetTransaction() failed :( \n"); }
+				}}
+			}
+		}else{
+			if( bAcceptRegNode && bRegNode )
+			{
+				deleteQueueNode(sCoinAddr);
+			}
+		}
+	}
+	return rzt;
+}
+
+bool checkQueueNodeCoinLockTime(const string sCallFrom, const string sTxHash, int payIdx, int64_t iTxHei)
+{
+	bool rzt=true;
+	uint64_t u6 = GetQueueNodeLockDays("checkQueueNodeCoinLockTime()", sTxHash, payIdx, false);  // get unlockblk //GetQueueNodeRegInBlocks(sTxHash, payIdx);
+	if( u6 > 0 )
+	{
+		rzt = (iTxHei >= u6);
+		//uint64_t u6Max = u6 + nLockQueueNodeCoinTime;
+		//if( iTxHei < u6Max ){ rzt=false; }
+	}
+    if( fDebug ){ printf( "%s Call checkQueueNodeCoinLockTime: rzt=[%d], txHash = [%s], payIdx=[%d], unlockblk=[%s] : [%s] \n", sCallFrom.c_str(), rzt, sTxHash.c_str(), payIdx, u64tostr(u6).c_str(), i64tostr(iTxHei).c_str()); }
+	return rzt;
+}
+bool canSpentQueueNodeCoin(const CTransaction& tx, int64_t iTxHei)
+{
+	bool rzt=true, bStake = tx.IsCoinStake(),  bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(iTxHei);
+	if( fDebug ){ printf( "canSpentQueueNodeCoin: iTxHei=[%s], tx.IsCoinStake = [%d], bQPoS_Rules_Actived=[%d], tx hash = [%s] \n", i64tostr(iTxHei).c_str(), bStake, bQPoS_Rules_Actived, tx.GetHash().ToString().c_str() ); }
+	if( !bQPoS_Rules_Actived && bStake ){ bStake = false; }
+	BOOST_FOREACH(const CTxIn& txin, tx.vin)
+	{
+		if( txin.prevout.IsNull() ){ continue; }
+		uint256 hashBlock = 0;   CTransaction txPrev;
+		if( fDebug ){ printf( "canSpentQueueNodeCoin: txin.prevout.n = [%u], \n", txin.prevout.n ); }
+		if( GetTransaction(txin.prevout.hash, txPrev, hashBlock) )	// get the vin's previous transaction
+		{
+			string sTxPrev = txPrev.GetHash().ToString();
+			if( !bStake && !checkQueueNodeCoinLockTime("canSpentQueueNodeCoin()", sTxPrev, txin.prevout.n, iTxHei) ){ rzt=false;  break; }
+		}else{ printf( "canSpentQueueNodeCoin: GetTransaction() failed :( \n"); }
+	}
+	if( fDebug ){ printf( "canSpentQueueNodeCoin: rzt=[%d] \n", rzt); }
+	return rzt;
+}
+
+bool isValidBlockHeight(const CBlock& block, int64_t nHei)
+{
+    int64_t blkHeight = strToInt64(block.blockData.c_str());
+	return (nHei == blkHeight);
+}
+
+/*bool isRegedQueueStakeMiner(const CBlock& block)
+{
+	bool rzt=false;   std::string sBlockFinder = "";
+	if( block.IsProofOfStake() )
+	{
+		int64_t iAmnt = 0;      const CTxIn& txin = block.vtx[1].vin[0];
+		getTxinAddressAndAmount(txin, sBlockFinder, iAmnt);
+		rzt = IsSystemNode(sBlockFinder) || isQueueNodeExists(sBlockFinder);
+	}else{ rzt=true; }
+	if(fDebug){ printf("isRegedQueueStakeMiner() : rzt=[%d], sBlockFinder(%s) \n", rzt, sBlockFinder.c_str()); }
+	return rzt;
+}*/
+
+bool IsTheRightQueueStakeMiner(const CBlock& block)
+{
+	bool rzt=false;   std::string sBlockFinder = "", sCurQueueMiner;
+	if( block.IsProofOfStake() )
+	{
+		int64_t iAmnt = 0;      const CTxIn& txin = block.vtx[1].vin[0];
+		getTxinAddressAndAmount(txin, sBlockFinder, iAmnt);
+		sCurQueueMiner = getCurrentQueueMiner();
+		rzt = (sCurQueueMiner == sBlockFinder) || IsSystemNode(sBlockFinder);
+	}else{ rzt=false; }
+	if(fDebug){ printf("IsTheRightQueueStakeMiner() : rzt=[%d], sBlockFinder=(%s), sCurQueueMiner=[%s] \n", rzt, sBlockFinder.c_str(), sCurQueueMiner.c_str()); }
+	return rzt;
+}
+
+/*bool isValidBlockTime(CBlockIndex* pindex, int64_t& blkTmSpace)
+{
+	bool rzt=true;   blkTmSpace=0;
+	int64_t curBlkTm = pindex->GetBlockTime(), prevBlkTm=0, tmNow = GetAdjustedTime();
+    if( fDebug ){ printf("isValidBlockTime() : curBlkTm=[%s], tmNow=[%s], pprev=[%x] \n", i64tostr(curBlkTm).c_str(), i64tostr(tmNow).c_str(), pindex->pprev); }
+	if( curBlkTm > tmNow ){ return error("isValidBlockTime() : curBlkTm >= tmNow :("); }
+	if( pindex->pprev )
+	{
+		int64_t prevBlkTm = pindex->pprev->GetBlockTime();   blkTmSpace = curBlkTm - prevBlkTm;
+		if( fDebug ){ printf("isValidBlockTime() : curBlkTm=[%s] - prevBlkTm=[%s] = [%s] \n", i64tostr(curBlkTm).c_str(), i64tostr(prevBlkTm).c_str(), i64tostr(blkTmSpace).c_str()); }
+		if( (curBlkTm <= prevBlkTm) || (curBlkTm < (prevBlkTm + Queue_Node_Block_Min_Interval)) || (curBlkTm > tmNow) ){ return error("isValidBlockTime() : block timestamp wrong"); }
+		if( blkTmSpace < Queue_Node_Block_Min_Interval ){ return error("isValidBlockTime() : block time interval < Queue_Node_Block_Min_Interval :("); }
+	}else{ return error("isValidBlockTime() : pindex->pprev is null :("); }
+	return rzt;
+}
+
+bool isValidMiner(CBlockIndex* pindex, const string sBlockFinder)
+{
+	bool rzt = true;   int64_t blkTmSpace=0;
+	if( isQueueNodeExists(sBlockFinder) )
+	{
+		if( isValidBlockTime(pindex, blkTmSpace) )
+		{
+			int iLost = blkTmSpace / Queue_Node_Block_Max_Interval;  // 120
+			if( fDebug ){ printf("isValidMiner() : Lost miner =[%d] \n", iLost); }
+		}else{ return error("isValidMiner() : isValidBlockTime() return failed :("); }
+	}else{ return error("isValidMiner() : sBlockFinder(%s) not reg :(", sBlockFinder.c_str()); }
+	return rzt;
+} */
+
+
+/*
+   string sql = "Create TABLE Nodes ([id] integer PRIMARY KEY AUTOINCREMENT"
+					",[nick] varchar(32) UNIQUE NOT NULL"
+					",[inblock] bigint DEFAULT 0"
+					",[coinaddr] varchar(34) UNIQUE NOT NULL"
+					",[tx] varchar(64) UNIQUE NOT NULL"
+					",[payid] int DEFAULT 0"
+					",[gotblks] bigint DEFAULT 0"
+					",[lost] bigint DEFAULT 0"
+					",[clrlost] bigint DEFAULT 0"
+					",[lockdays] int DEFAULT 0"
+					",[unlockblk] bigint DEFAULT 0"
+					",[lastblktm] bigint DEFAULT 0);";
+
+struct OneQueueNodePack
+{
+   int id, payid, lockdays, confirm;
+   string nick, coinaddr, tx;
+   int64_t inblock, gotblks, lost, clrlost, unlockblk, lastblktm, regtm;
+};
+struct QueueNodeListPack
+{
+   int64_t i6RecordCount;
+   std::vector<OneQueueNodePack> vQueueNodes;
+}; */
+
+static int getOneQueueNodeCallBack(void *data, int argc, char **argv, char **azColName)
+{
+   //if( fDebug ){ printf("getOneQueueNodeCallBack() :: data=[%x], argc=[%d] \n", data, argc); }
+   if( (data != NULL) && (argc > 12) )
+   {
+      QueueNodeListPack* p = (QueueNodeListPack *)data;
+	  OneQueueNodePack oneNode = { strToInt(argv[0]), strToInt(argv[5]), strToInt(argv[9]), strToInt(argv[12]), argv[1], argv[3], argv[4], strToInt64(argv[2]), strToInt64(argv[6]), strToInt64(argv[7]), strToInt64(argv[8]), strToInt64(argv[10]), strToInt64(argv[11]), strToInt64(argv[13]) };
+	  p->vQueueNodes.push_back(oneNode);
+	  p->i6RecordCount++;
+   }
+   return 0;
+}
+
+bool getAllQueueNodes(sqlite3 *dbOne, const string sql, QueueNodeListPack& pack)
+{
+   //if( fDebug ){ printf("getAllQueueNodes() :: [%s] \n", sql.c_str()); }
+   pack.i6RecordCount = 0;      LOCK(cs_queue_mining);
+   int rc = sqlite3_exec(dbOne, sql.c_str(), getOneQueueNodeCallBack, (void*)&pack, NULL);      bool rzt = (rc == SQLITE_OK) && (pack.i6RecordCount > 0);
+   if( fDebug ){ printf("getAllQueueNodes() :: rzt = [%d], total nodes=[%d], [%s] \n", rzt, (int)pack.i6RecordCount, sql.c_str()); }
+   return rzt;
+}
+bool getAllQueueNodes(const string sql, QueueNodeListPack& pack)
+{
+   return getAllQueueNodes(dbQueueMining, sql, pack);
+}
+bool getAllQueueNodes(QueueNodeListPack& pack)
+{
+    string sql = "select * from Nodes order by id asc limit 500;";  // string sql = "select * from Nodes order by lost asc, lastblktm asc limit 500;";
+    return getAllQueueNodes(dbQueueMining, sql, pack);
+}
+
+bool getAllActiveQueueNodes(sqlite3 *dbOne, QueueNodeListPack& pack)
+{
+    string sql = "select * from Nodes where lost<1 order by lastblktm asc, id asc limit 500;";
+    return getAllQueueNodes(dbOne, sql, pack);
+}
+bool getAllActiveQueueNodes(QueueNodeListPack& pack)
+{
+    string sql = "select * from Nodes where lost<1 order by lastblktm asc, id asc limit 500;";
+    return getAllQueueNodes(dbQueueMining, sql, pack);
+}
+
+bool GetCurrentQueueMinerInfo(QueueNodeListPack& pack)
+{
+    string sql = "select * from Nodes where lost<1 and confirm>9 order by lastblktm asc, id asc limit 1;";
+	bool rzt = getAllQueueNodes(sql, pack);
+	return rzt;
+}
+
+bool ImTheCurrentQueueMiner()
+{
+	bool rzt = false, bSysMiningTime = isSystemNodeMiningTime();     string sCurQueueMiner = "";
+	if( bSysMiningTime ){ rzt = bSystemNodeWallet; }
+	else{
+		sCurQueueMiner = getCurrentQueueMiner();   
+		rzt = ( (sCurQueueMiner.length() < 33) ? false : isMineCoinAddress(sCurQueueMiner) );
+	}
+	if( fDebug ){ printf("ImTheCurrentQueueMiner() :: rzt=%d, bSysMiningTime=[%d],  bSystemNodeWallet=[%d], [%s] \n", rzt, bSysMiningTime, bSystemNodeWallet, sCurQueueMiner.c_str()); }
+	return rzt;
+}
+
+int64_t getLast2BlockTimeSpace()
+{
+	CBlockIndex* pindexPrev = pindexBest;
+	int64_t pBlkTm = pindexPrev->GetBlockTime(), prevBlkTm = pindexPrev->pprev->GetBlockTime(), tmSpace = pBlkTm - prevBlkTm;
+    return tmSpace;
+}
+
+int64_t getLastBlockTimeSpaceWithNow()
+{
+	CBlockIndex* pindexPrev = pindexBest;
+	int64_t prevBlkTm = pindexPrev->GetBlockTime(), tmNow = GetAdjustedTime(), tmSpace = tmNow - prevBlkTm;
+    return tmSpace;
+}
+
+bool isSystemNodeMiningTime()
+{
+    int64_t tm = getLastBlockTimeSpaceWithNow();
+    return (tm > Queue_Node_Block_Max_Interval);
+}
+
+bool isTheRightMiningTime()
+{
+    bool rzt = false;     int64_t tm = getLastBlockTimeSpaceWithNow();
+	if( fDebug ){ printf("isTheRightMiningTime() :: time space = [%d] \n", (int)tm); }
+	if( tm >= Queue_Node_Block_Min_Interval )
+	{
+		if( tm < Queue_Node_Block_Max_Interval ){ rzt = true; }
+		else if( bSystemNodeWallet )
+		{
+			int64_t i6SysNodeWorkTime = GetArg("-sysnodeworktime", (Queue_Node_Block_Max_Interval * 2));  // 240
+			if( tm > i6SysNodeWorkTime ){ rzt = true; }
+		}
+	}
+    //return ( (tm >= Queue_Node_Block_Min_Interval) && (tm < Queue_Node_Block_Max_Interval) );
+	return rzt;
 }

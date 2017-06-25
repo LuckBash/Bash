@@ -111,6 +111,7 @@ struct Bitnet_node_struct
 };
 #pragma pack ()
 
+int GetNumConnections();
 void RelayShutDown();
 void PushBoostMe(CNode* pNode);
 void PushBoostMeToAll();

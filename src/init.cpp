@@ -8,6 +8,7 @@
 #include "net.h"
 #include "init.h"
 #include "util.h"
+#include "ntp.h"
 #include "bitbet.h"
 #include "ui_interface.h"
 #include "checkpoints.h"
@@ -51,6 +52,7 @@ extern int fBindPort920;
 extern int fFixedChangeAddress;
 extern int fNewSocketThread;
 extern string s_BlockChain_AdBonus_Dir;
+int64_t nLimitHeight=0;
 
 string s_Current_Dir = "";
 string s_BlockChain_Dir = "";
@@ -79,6 +81,7 @@ int dw_zip_txdb = 0;
 #ifndef ANDROID
 extern void initBitChain();
 #endif
+extern void initDefaultStakeKey();
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -1177,6 +1180,7 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
                 strErrors << _("Cannot write default address") << "\n";
         }
     }
+    initDefaultStakeKey();
 
     printf("%s", strErrors.str().c_str());
     printf(" wallet      %15"PRId64"ms\n", GetTimeMillis() - nStart);
@@ -1285,6 +1289,20 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
             InitWarning(_("Warning: -paytxfee is set very high! This is the transaction fee you will pay if you send a transaction."));
     }
 
+    nLimitHeight = GetArg("-limitheight", 0);
+    if( fDebug )
+    {
+        int64_t nHeight = GetArg("-qposregheight", (int)Accept_Register_QPoS_Node_Height);      int64_t *p64 = (int64_t *)&Accept_Register_QPoS_Node_Height;
+        if( nHeight != Accept_Register_QPoS_Node_Height ){ *p64 = nHeight; }
+        nHeight = GetArg("-qposactiveheight", (int)Queue_PoS_Rules_Acitve_Height);      p64 = (int64_t *)&Queue_PoS_Rules_Acitve_Height;
+        if( nHeight != Queue_PoS_Rules_Acitve_Height ){ *p64 = nHeight; }
+        printf("Accept_Register_QPoS_Node_Height=%d, Queue_PoS_Rules_Acitve_Height=%d \n",  (int)Accept_Register_QPoS_Node_Height, (int)Queue_PoS_Rules_Acitve_Height);
+    }
+/* printf("bnProofOfStakeLimit = %s\n", bnProofOfStakeLimit.getuint256().ToString().c_str());
+printf("bnProofOfStakeLimitV2 = %s\n", bnProofOfStakeLimitV2.getuint256().ToString().c_str());
+printf("bnProofOfWorkLimitTestNet = %s\n", bnProofOfWorkLimitTestNet.getuint256().ToString().c_str());
+printf("bnQueueMiningProofOfStakeLimit = %s\n", bnQueueMiningProofOfStakeLimit.getuint256().ToString().c_str()); */
+
 #ifdef USE_BITNET
 	LoadIniCfg(1, 0);
 #endif	
@@ -1307,9 +1325,8 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
     uiInterface.InitMessage(_("Done loading"));
     printf("Done loading\n");
 
-   //openSqliteDb();
-
-    bBitBetSystemWallet = isBitBetSystemWallet();
+    bBitBetSystemWallet = isBitBetSystemWallet();      bSystemNodeWallet = isSystemNodeWallet();
+    if( fDebug ){ printf("bBitBetSystemWallet=[%d], bSystemNodeWallet=[%d] \n", bBitBetSystemWallet, bSystemNodeWallet); }
 /*	string sExpBetNum="0xcadcbc";  uint64_t u6Num = strToInt64(sExpBetNum, 16);   uint32_t x = u6Num;//sExpBetNum [0xcadcbc :: 0] [0x0] ";
 	uint64_t u62 = strtoll(sExpBetNum.c_str(), NULL, 16);  //strToInt64(sExpBetNum.c_str());
 	if( fDebug ){ printf("init : sExpBetNum [%s :: %s :: %s] [0x%X] \n", sExpBetNum.c_str(), u64tostr(u6Num).c_str(), u64tostr(u62).c_str(), x); } */

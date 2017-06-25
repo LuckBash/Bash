@@ -27,7 +27,7 @@ namespace Checkpoints
     //
     static MapCheckpoints mapCheckpoints =
         boost::assign::map_list_of
-        ( 0,      hashGenesisBlock )
+        ( 0,      uint256("0x00000bc87d0385e25417c877e00e959087e8eebbf76722dfcff9e76da7cbf3ea"))
 		( 10,     uint256("0x95b0f5c36cdce1b51cf5b6ff2c08e9e93497e08be66f2cecd3c765d1744fddb9"))
 		( 126,     uint256("0xb6860467e5cb4e062e1c43650b96d69cd9245487941d24bf5d91fc19c99a0262"))
 		( 15000,     uint256("0xa8361401f91dbcb4b6b2353a911a1ee48cdd03fe9fb879b78166fc7caa381fbd"))
@@ -50,15 +50,16 @@ namespace Checkpoints
 		( 260000,     uint256("0xb02b55f419f4bffd3786d487b9c45a1a67634446e547f2a6d41a18ae93fa4f42"))
 		( 270000,     uint256("0x23f6369cbdb5538ec4d49a481b4f3b6bfdc9e5ffd48e92d3f969149321d2f9da"))
 		( 292293,     uint256("0x48fb32107293572f65077ce6d836af63577568ed63f1956da31b615be295a030"))
+		( 300000,     uint256("0x876abd9fa83c97f0c81d92c29db81c68dcc4c16b12bd84b7f09e4b02800e0bdf"))
+		( 330000,     uint256("0x0e73b398df5bc80d9f87e1433f274ee68cc4a1f8ca05306cd9001b96e217db73"))
+		( 340000,     uint256("0x73a6ba16682f4e21ad85765ad586742bd336c2de82c6e824692434b2d5a1e551"))
     ;
 
     // TestNet has no checkpoints
     static MapCheckpoints mapCheckpointsTestnet =
         boost::assign::map_list_of
-        ( 0, hashGenesisBlockTestNet )
-		( 1,      uint256("0x000003f85af837f52e8520b53c13563af57e555b9e1003428acf5c2a2b71b76d"))
-		( 10,     uint256("0xce8b138a8f5a07815b09bb982eeff2c0b43ef694f5eff3b23ab52ff9cc3681ca"))
-		( 20,     uint256("0x14d03bdf522e9fa92852539d3c5ebee178ef02c17c10a8e33d7b8db83cc63cb3"))
+        ( 0, uint256("0x00000335d0f101f4a000216013cdb9838b1965d09d2f0dade343ae73e682ab65"))
+        ( 100, uint256("0x5a452a195eb657d3a85863b14ad9231565bc47d9c6ad40f3bf8d46d0be136c74"))
         ;
 
     bool CheckHardened(int nHeight, const uint256& hash)
@@ -470,12 +471,12 @@ namespace Checkpoints
         assert(mapBlockIndex.count(hashSyncCheckpoint));
         const CBlockIndex* pindexSync = mapBlockIndex[hashSyncCheckpoint];
 
-		int vCoinbaseMaturity = nCoinbaseMaturity;
+		int vCoinbaseMaturity = Get_nCoinbaseMaturity(pindexSync->nHeight);
 		//if( pindexSync->nHeight <= 10 )
 		//	vCoinbaseMaturity = 0;
 
         return (nBestHeight >= pindexSync->nHeight + vCoinbaseMaturity ||
-                pindexSync->GetBlockTime() + nStakeMinAge < GetAdjustedTime());
+                pindexSync->GetBlockTime() + Get_nStakeMinAge(pindexSync->nHeight) < GetAdjustedTime());
     }
 }
 

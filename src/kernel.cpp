@@ -44,16 +44,16 @@ static std::map<int, unsigned int> mapStakeModifierCheckpoints =
         ( 260000, 0xc79d4af5 )
         ( 270000, 0x575e68da )
         ( 292293, 0x8a8a83e9 )
+        ( 300000, 0x16a721c5 )
+        ( 330000, 0x9939df9f )
+        ( 340000, 0x43ce5c82 )
     ;
 
 // Hard checkpoints of stake modifiers to ensure they are deterministic (testNet)
 static std::map<int, unsigned int> mapStakeModifierCheckpointsTestNet =
     boost::assign::map_list_of
         ( 0, 0x0e00670bu )
-		( 1,  0xbc4b99b6u )
-		( 2,  0x63d50f15 )
-        ( 10, 0x125a5de7 )
-        ( 20, 0x76a101b9 )
+        ( 100, 0xd1103991 )
     ;
 
 // Get time weight
@@ -63,7 +63,7 @@ int64_t GetWeight(int64_t nIntervalBeginning, int64_t nIntervalEnd)
     // this change increases active coins participating the hash and helps
     // to secure the network when proof-of-stake difficulty is low
 
-    return min(nIntervalEnd - nIntervalBeginning - nStakeMinAge, (int64_t)nStakeMaxAge);
+    return min(nIntervalEnd - nIntervalBeginning - Get_nStakeMinAge(nBestHeight), (int64_t)nStakeMaxAge);
 }
 
 // Get the last stake modifier and its generation time from a given block
@@ -288,7 +288,7 @@ static bool GetKernelStakeModifier(uint256 hashBlockFrom, uint64_t& nStakeModifi
     {
         if (!pindex->pnext)
         {   // reached best block; may happen if node is behind on block chain
-            if (fPrintProofOfStake || (pindex->GetBlockTime() + nStakeMinAge - nStakeModifierSelectionInterval > GetAdjustedTime()))
+            if (fPrintProofOfStake || (pindex->GetBlockTime() + Get_nStakeMinAge(pindex->nHeight) - nStakeModifierSelectionInterval > GetAdjustedTime()))
                 return error("GetKernelStakeModifier() : reached best block %s at height %d from block %s",
                     pindex->GetBlockHash().ToString().c_str(), pindex->nHeight, hashBlockFrom.ToString().c_str());
             else
@@ -413,7 +413,9 @@ static bool CheckStakeKernelHashV2(CBlockIndex* pindexPrev, unsigned int nBits, 
     if (nTimeTx < txPrev.nTime)  // Transaction timestamp violation
         return error("CheckStakeKernelHash() : nTime violation");
 
-    if (nTimeBlockFrom + nStakeMinAge > nTimeTx) // Min age requirement
+    int64_t n6Height = pindexPrev->nHeight;
+    if( (n6Height+1) == Queue_PoS_Rules_Acitve_Height ){  }
+    else if (nTimeBlockFrom + Get_nStakeMinAge(n6Height) > nTimeTx) // Min age requirement
         return error("CheckStakeKernelHash() : min age violation");
 
     // Base target
@@ -539,7 +541,11 @@ Check02:
 // Check whether the coinstake timestamp meets protocol
 bool CheckCoinStakeTimestamp(int nHeight, int64_t nTimeBlock, int64_t nTimeTx)
 {
-    if (IsProtocolV2(nHeight))
+    if( Is_Queue_PoS_Rules_Acitved(nHeight) )
+    {
+        return nTimeTx >= nTimeBlock;
+    }
+    else if (IsProtocolV2(nHeight))
         return (nTimeBlock == nTimeTx) && ((nTimeTx & STAKE_TIMESTAMP_MASK) == 0);
     else
         return (nTimeBlock == nTimeTx);

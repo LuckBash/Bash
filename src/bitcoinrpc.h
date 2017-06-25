@@ -249,4 +249,7 @@ extern json_spirit::Value rollbackblocks(const json_spirit::Array& params, bool 
 extern json_spirit::Value testtxmsg(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value bitbetcmd(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value checkoxcard(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value regqueuenode(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value unlockqueuenode(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value getqueuenodelist(const json_spirit::Array& params, bool fHelp);
 #endif

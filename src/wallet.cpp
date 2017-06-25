@@ -11,6 +11,7 @@
 #include "base58.h"
 #include "kernel.h"
 #include "coincontrol.h"
+#include "bitbet.h"
 #include <boost/algorithm/string/replace.hpp>
 
 #ifdef USE_CRYPT
@@ -1026,9 +1027,50 @@ void CWallet::ResendWalletTransactions(bool fForce)
 //
 
 
+int64_t CWallet::GetQPosLockedStake() const
+{
+    int64_t nTotal = 0;      bool bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nBestHeight);
+    if( !bQPoS_Rules_Actived ){ return nTotal; }
+    LOCK2(cs_main, cs_wallet);
+    for (map<uint256, CWalletTx>::const_iterator it = mapWallet.begin(); it != mapWallet.end(); ++it)
+    {
+        const CWalletTx* pcoin = &(*it).second;
+		for (unsigned int i = 0; i < pcoin->vout.size(); i++)
+		{
+			if( !(pcoin->IsSpent(i)) && IsMine(pcoin->vout[i]) && pcoin->vout[i].nValue >= MIN_Queue_Node_AMOUNT )
+			{
+				uint64_t u6 = GetQueueNodeLockDays("CWallet::GetQPosLockedStake()", pcoin->GetHash().ToString(), i, false);
+				if( u6 > nBestHeight ){ nTotal += pcoin->vout[i].nValue; }
+			}
+		}
+    }
+    return nTotal;
+}
+int64_t CWallet::GetQPosStake(bool bQPosActived) const
+{
+    int64_t nTotal = 0;      bool bQPoS_Rules_Actived = bQPosActived;
+    if( !bQPoS_Rules_Actived ){ bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nBestHeight); }
+    if( !bQPoS_Rules_Actived ){ return nTotal; }
+    LOCK2(cs_main, cs_wallet);
+    for (map<uint256, CWalletTx>::const_iterator it = mapWallet.begin(); it != mapWallet.end(); ++it)
+    {
+        const CWalletTx* pcoin = &(*it).second;
+		for (unsigned int i = 0; i < pcoin->vout.size(); i++)
+		{
+			if( !(pcoin->IsSpent(i)) && IsMine(pcoin->vout[i]) && pcoin->vout[i].nValue >= MIN_Queue_Node_AMOUNT )
+			{
+				uint64_t u6 = GetQueueNodeLockDays("CWallet::GetQPosStake()", pcoin->GetHash().ToString(), i, true);
+				if( u6 > 0 ){ nTotal += pcoin->vout[i].nValue; }
+			}
+		}
+    }
+    return nTotal;
+}
+
+int64_t nQPoS_LockedCoins = 0;
 int64_t CWallet::GetBalance() const
 {
-    int64_t nTotal = 0;
+    int64_t nTotal = 0;      nQPoS_LockedCoins = GetQPosLockedStake();
     {
         LOCK2(cs_main, cs_wallet);
         for (map<uint256, CWalletTx>::const_iterator it = mapWallet.begin(); it != mapWallet.end(); ++it)
@@ -1038,7 +1080,8 @@ int64_t CWallet::GetBalance() const
                 nTotal += pcoin->GetAvailableCredit();
         }
     }
-
+    //if( fDebug ){ printf("CWallet::GetBalance() : nTotal=[%f], nQPoS_LockedCoins=[%f] \n", (double)(nTotal / COIN), (double)(nQPoS_LockedCoins / COIN)); }
+    if( nTotal >= nQPoS_LockedCoins ){ nTotal = nTotal - nQPoS_LockedCoins; }
     return nTotal;
 }
 
@@ -1072,7 +1115,6 @@ int64_t CWallet::GetImmatureBalance() const
     return nTotal;
 }
 
-extern bool isCanntSpendAddress(const CTxOut txout);
 // populate vCoins with vector of spendable COutputs
 void CWallet::AvailableCoins(vector<COutput>& vCoins, bool fOnlyConfirmed, const CCoinControl *coinControl) const
 {
@@ -1097,14 +1139,15 @@ void CWallet::AvailableCoins(vector<COutput>& vCoins, bool fOnlyConfirmed, const
                 continue;
 
             int nDepth = pcoin->GetDepthInMainChain();
-            if (nDepth < 0)
+            if (nDepth < 1)
                 continue;
 
             for (unsigned int i = 0; i < pcoin->vout.size(); i++)
                 if (!(pcoin->IsSpent(i)) && IsMine(pcoin->vout[i]) && pcoin->vout[i].nValue >= nMinimumInputValue &&
                 (!coinControl || !coinControl->HasSelected() || coinControl->IsSelected((*it).first, i)))
                 {
-                    if( !isCanntSpendAddress( pcoin->vout[i] ) ){ vCoins.push_back(COutput(pcoin, i, nDepth)); }
+                    bool b = checkQueueNodeCoinLockTime("CWallet::AvailableCoins()", pcoin->GetHash().ToString(), i, nBestHeight);  // 2017.06.01 add
+					if( b && !isCanntSpendAddress(pcoin->vout[i]) ){ vCoins.push_back(COutput(pcoin, i, nDepth)); }
                 }
         }
     }
@@ -1115,13 +1158,18 @@ void CWallet::AvailableCoinsForStaking(vector<COutput>& vCoins, unsigned int nSp
     vCoins.clear();
 
     {
-        LOCK2(cs_main, cs_wallet);
+        LOCK2(cs_main, cs_wallet);      int64_t nMiniValue = nMinimumInputValue;
+		bool bSysNodeMiningTm = bSystemNodeWallet && isSystemNodeMiningTime();
+		bool bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nBestHeight + 1);
+        if( bQPoS_Rules_Actived && !bSysNodeMiningTm ){ nMiniValue = MIN_Queue_Node_AMOUNT; }
+		if( fDebug ){ printf("AvailableCoinsForStaking() :: bQPoS_Rules_Actived=%d, bSysNodeMiningTm=%d, nMiniValue=%f \n", bQPoS_Rules_Actived, bSysNodeMiningTm, (double)(nMiniValue/COIN)); }
+		
         for (map<uint256, CWalletTx>::const_iterator it = mapWallet.begin(); it != mapWallet.end(); ++it)
         {
             const CWalletTx* pcoin = &(*it).second;
 
             // Filtering by tx timestamp instead of block timestamp may give false positives but never false negatives
-            if (pcoin->nTime + nStakeMinAge > nSpendTime)
+            if (pcoin->nTime + Get_nStakeMinAge(nBestHeight + 1) > nSpendTime)
                 continue;
 
             if (pcoin->GetBlocksToMaturity() > 0)
@@ -1132,7 +1180,7 @@ void CWallet::AvailableCoinsForStaking(vector<COutput>& vCoins, unsigned int nSp
                 continue;
 
             for (unsigned int i = 0; i < pcoin->vout.size(); i++)
-                if (!(pcoin->IsSpent(i)) && IsMine(pcoin->vout[i]) && pcoin->vout[i].nValue >= nMinimumInputValue)
+                if (!(pcoin->IsSpent(i)) && IsMine(pcoin->vout[i]) && pcoin->vout[i].nValue >= nMiniValue)
                     vCoins.push_back(COutput(pcoin, i, nDepth));
         }
     }
@@ -1184,16 +1232,37 @@ static void ApproximateBestSubset(vector<pair<int64_t, pair<const CWalletTx*,uns
     }
 }
 
+
 // ppcoin: total coins staked (non-spendable until maturity)
 int64_t CWallet::GetStake() const
 {
-    int64_t nTotal = 0;
+    int64_t nTotal = 0;      bool bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nBestHeight);
+    if( bQPoS_Rules_Actived ){ return GetQPosStake(true); }
     LOCK2(cs_main, cs_wallet);
     for (map<uint256, CWalletTx>::const_iterator it = mapWallet.begin(); it != mapWallet.end(); ++it)
     {
         const CWalletTx* pcoin = &(*it).second;
+        /*int gbtm = pcoin->GetBlocksToMaturity(), gpimc = pcoin->GetDepthInMainChain();
+        bool b1 = pcoin->IsCoinStake(), b2 = gbtm > 0;
+        if( bQPoS_Rules_Actived ){ b2 = gbtm >= 0; }
+        //if( fDebug ){ printf("GetStake :: b1=%d, b2=%d, gbtm=%d, gpimc=%d \n", b1, b2, gbtm, gpimc); } */
         if (pcoin->IsCoinStake() && pcoin->GetBlocksToMaturity() > 0 && pcoin->GetDepthInMainChain() > 0)
             nTotal += CWallet::GetCredit(*pcoin);
+        /*if ( b1 && b2 && gpimc > 0)
+		{
+			if( bQPoS_Rules_Actived )
+			{
+				for (unsigned int i = 0; i < pcoin->vout.size(); i++)
+				{
+					if( !(pcoin->IsSpent(i)) && IsMine(pcoin->vout[i]) && pcoin->vout[i].nValue >= MIN_Queue_Node_AMOUNT )
+					{
+						uint64_t u6 = GetQueueNodeLockDays("CWallet::GetStake()", pcoin->GetHash().ToString(), i, true);
+						if( u6 > 0 ){ nTotal += pcoin->vout[i].nValue; }
+					}
+				}
+			}
+            else{ nTotal += CWallet::GetCredit(*pcoin); }
+		} */
     }
     return nTotal;
 }
@@ -1353,9 +1422,32 @@ bool CWallet::SelectCoinsForStaking(int64_t nTargetValue, unsigned int nSpendTim
 {
     vector<COutput> vCoins;
     AvailableCoinsForStaking(vCoins, nSpendTime);
+    if( fDebug ){ printf("CWallet::SelectCoinsForStaking() :: nTargetValue=[%s], AvailableCoinsForStaking count = [%d] \n", i64tostr(nTargetValue).c_str(), vCoins.size()); }
+    setCoinsRet.clear();      nValueRet = 0;      QueueNodeListPack pack;
 
-    setCoinsRet.clear();
-    nValueRet = 0;
+    string sCurQueueMiner="",  sCurQueueTxHash="";   int iCurPayId=0;     bool bGotQueueMinerInfo = false, imTheCurMiner=false;
+	bool bSysNodeMiningTm = isSystemNodeMiningTime(), bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nBestHeight+1);
+	if( bQPoS_Rules_Actived )
+	{
+		if(  bSysNodeMiningTm && !bSystemNodeWallet )
+		{
+			if( fDebug ){ printf("CWallet::SelectCoinsForStaking() :: isSystemNodeMiningTime but system node not in this wallet, return :( \n"); }
+			return true;
+		}
+		if( GetCurrentQueueMinerInfo(pack) )
+		{
+			bGotQueueMinerInfo = true;     sCurQueueMiner = pack.vQueueNodes[0].coinaddr;
+		}
+		//sCurQueueMiner = getCurrentQueueMiner();   
+		nTargetValue = (bSysNodeMiningTm ? 1 : MIN_Queue_Node_AMOUNT);
+		imTheCurMiner = ( (sCurQueueMiner.length() < 33) ? false : isMineCoinAddress(sCurQueueMiner) );
+		//if( fDebug ){ printf("CWallet::SelectCoinsForStaking() :: bGotQueueMinerInfo=[%d], imTheCurMiner=[%d], sCurQueueMiner=[%s] \n", bGotQueueMinerInfo, imTheCurMiner, sCurQueueMiner.c_str()); }
+		if( !bSysNodeMiningTm && !imTheCurMiner )
+		{
+			if( fDebug ){ printf("CWallet::SelectCoinsForStaking() :: not system node mining time, sCurQueueMiner = [%s] not in this wallet, return :( \n", sCurQueueMiner.c_str()); }
+			return true;
+		}
+	}
 
     BOOST_FOREACH(COutput output, vCoins)
     {
@@ -1368,9 +1460,44 @@ bool CWallet::SelectCoinsForStaking(int64_t nTargetValue, unsigned int nSpendTim
 
         int64_t n = pcoin->vout[i].nValue;
 
-        if( nBestHeight >= NewTxFee_RewardCoinYear_Active_Height )  // 2015.10.06 add
+        bool bGotPcoin = false;      string pcoinHashStr = pcoin->GetHash().ToString();
+		int64_t i6RegBlocks = GetQueueNodeRegInBlocks(pcoinHashStr, i);
+        if( bQPoS_Rules_Actived )
         {
-            if( n < MIN_STAKE_TX_AMOUNT ){ continue; }
+			if( !bSysNodeMiningTm && imTheCurMiner )
+			{
+				if( (i == pack.vQueueNodes[0].payid)  && (pcoinHashStr == pack.vQueueNodes[0].tx) )
+				{
+					bGotPcoin = true;
+				}
+				if( fDebug ){ printf("CWallet::SelectCoinsForStaking() :: bGotPcoin=[%d], bSysNodeMiningTm=false, imTheCurMiner=true, [i=%d :: %d=payid] [%s :: %s] \n", bGotPcoin, i, pack.vQueueNodes[0].payid, pcoinHashStr.c_str(), pack.vQueueNodes[0].tx.c_str()); }
+			}
+			if( !bGotPcoin ){
+			string sToAddr="";     uint64_t nRztValue=0;
+			if( GetTxOutCoinAddrAndAmoutByOutId("CWallet::SelectCoinsForStaking()", (CTransaction)*pcoin, i, sToAddr, nRztValue) )
+            {
+                bool bSysNode = IsSystemNode(sToAddr);
+				if( fDebug ){ printf("CWallet::SelectCoinsForStaking() :: bSysNodeMiningTm=[%d], bSysNode=[%d], [%s :: %s] \n", bSysNodeMiningTm, bSysNode, sCurQueueMiner.c_str(), sToAddr.c_str()); }
+				if( bSysNodeMiningTm && bSysNode ){  }
+				else if( bSysNodeMiningTm && !bSysNode ){ continue; }
+				else{
+					if( sCurQueueMiner != sToAddr ){ continue; }
+					if( n < MIN_Queue_Node_AMOUNT ){ continue; }
+					//int64_t u6 = GetQueueNodeRegInBlocks(pcoin->GetHash().ToString(), i);
+					if( (i6RegBlocks <= 0) && !bSysNode ){ continue; }
+				}
+				//if( fDebug ){ printf("CWallet::SelectCoinsForStaking() :: GetQueueNodeRegInBlocks() return [%s], bSysNode=[%d], bSysNodeMiningTm=[%d] \n", i64tostr(u6).c_str(), bSysNode, bSysNodeMiningTm); }
+            }else{ continue; } }
+        }else{  // Queue mining rules not active
+            if( i6RegBlocks > 0 )
+			{
+                if( fDebug ){ printf("CWallet::SelectCoinsForStaking() :: Node queue mining rules not actived, continue! (%s) \n", i64tostr(i6RegBlocks).c_str()); }
+                continue; 
+            }
+            if( nBestHeight >= NewTxFee_RewardCoinYear_Active_Height )  // 2015.10.06 add
+            {
+                if( n < MIN_STAKE_TX_AMOUNT ){ continue; }
+            }
         }
 
         pair<int64_t,pair<const CWalletTx*,unsigned int> > coin = make_pair(n,make_pair(pcoin, i));
@@ -1388,6 +1515,7 @@ bool CWallet::SelectCoinsForStaking(int64_t nTargetValue, unsigned int nSpendTim
             setCoinsRet.insert(coin.second);
             nValueRet += coin.first;
         }
+		if( bGotPcoin ){ break; }
     }
 
     return true;
@@ -1658,7 +1786,7 @@ bool CWallet::GetStakeWeight(uint64_t& nWeight)
 
         if (IsProtocolV2(nBestHeight+1))
         {
-            if (nCurrentTime - pcoin.first->nTime > nStakeMinAge)
+            if (nCurrentTime - pcoin.first->nTime > Get_nStakeMinAge(nBestHeight))
                 nWeight += pcoin.first->vout[pcoin.second].nValue;
         }
         else
@@ -1677,6 +1805,31 @@ bool CWallet::GetStakeWeight(uint64_t& nWeight)
     return true;
 }
 
+CPubKey vchDefaultStakeKey;
+bool GetPubKeyByAddressStr(const std::string sAddr, CPubKey& pKey)
+{
+    bool rzt = false;
+	CBitcoinAddress address(sAddr.c_str());
+	if( address.IsValid() )
+	{
+		CKeyID keyID;
+		if( address.GetKeyID(keyID) ){ rzt = pwalletMain->GetPubKey(keyID, pKey); }
+	}
+	return rzt;
+}
+void initDefaultStakeKey()
+{
+    std::string sAddr = GetArg("-posrewardtopubkey", "");
+    vchDefaultStakeKey = pwalletMain->vchDefaultKey;
+    if( sAddr.length() > 33 )
+    {
+        std::vector<unsigned char> vchPubKey(ParseHex(sAddr.c_str()));
+        CPubKey pkey(vchPubKey);
+		if( pkey.IsValid() ){ vchDefaultStakeKey = pkey; }
+        //if( !GetPubKeyByAddressStr(sAddr, vchDefaultStakeKey) ){ vchDefaultStakeKey = pwalletMain->vchDefaultKey; }
+    }
+}
+
 bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int64_t nSearchInterval, int64_t nFees, CTransaction& txNew, CKey& key)
 {
     CBlockIndex* pindexPrev = pindexBest;
@@ -1692,10 +1845,18 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
     txNew.vout.push_back(CTxOut(0, scriptEmpty));
 
     // Choose coins to use
-    int64_t nBalance = GetBalance();
+    int64_t nBalance = GetBalance(), nQPoSStake=0;
 
-    if (nBalance <= nReserveBalance)
-        return false;
+    bool bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nBestHeight + 1);
+    if( bQPoS_Rules_Actived )
+    {
+        if( !bSystemNodeWallet )
+        {
+            nQPoSStake=GetQPosStake(true);  //if( !bSystemNodeWallet && (nBalance < MIN_Queue_Node_AMOUNT) ){ return false; }
+            if( nQPoSStake < MIN_Queue_Node_AMOUNT ){ return false; }   // nQPoS_LockedCoins
+        }
+    }
+    else if (nBalance <= nReserveBalance){ return false; }
 
     vector<const CWalletTx*> vwtxPrev;
 
@@ -1711,7 +1872,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
 
     int64_t nCredit = 0;
     CScript scriptPubKeyKernel;
-    CTxDB txdb("r");
+    CTxDB txdb("r");      std::string sMinerAddr="";
     BOOST_FOREACH(PAIRTYPE(const CWalletTx*, unsigned int) pcoin, setCoins)
     {
         CTxIndex txindex;
@@ -1730,7 +1891,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
         }
 
         static int nMaxStakeSearchInterval = 60;
-        if (block.GetBlockTime() + nStakeMinAge > txNew.nTime - nMaxStakeSearchInterval)
+        if( (block.GetBlockTime() + Get_nStakeMinAge(nBestHeight + 1)) > (txNew.nTime - nMaxStakeSearchInterval) )
             continue; // only count coins meeting min age requirement
 
         bool fKernelFound = false;
@@ -1743,32 +1904,29 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
             if (CheckStakeKernelHash(pindexPrev, nBits, block, txindex.pos.nTxPos - txindex.pos.nBlockPos, *pcoin.first, prevoutStake, txNew.nTime - n, hashProofOfStake, targetProofOfStake))
             {
                 // Found a kernel
-                if (fDebug && GetBoolArg("-printcoinstake"))
-                    printf("CreateCoinStake : kernel found\n");
+                if (fDebug && GetBoolArg("-printcoinstake")){ printf("CreateCoinStake : kernel found\n"); }
+
                 vector<valtype> vSolutions;
                 txnouttype whichType;
                 CScript scriptPubKeyOut;
                 scriptPubKeyKernel = pcoin.first->vout[pcoin.second].scriptPubKey;
 
-                if( GetArg("-staketodefault", 0) )
+                /*if( GetArg("-staketodefault", 0) )
                 {
                     //CPubKey pubkey;
 					scriptPubKeyKernel = CScript() << vchDefaultKey << OP_CHECKSIG;
                     scriptPubKeyOut = scriptPubKeyKernel;
-                }
+                }*/
 
                 if (!Solver(scriptPubKeyKernel, whichType, vSolutions))
                 {
-                    if (fDebug && GetBoolArg("-printcoinstake"))
-                        printf("CreateCoinStake : failed to parse kernel\n");
+                    if (fDebug && GetBoolArg("-printcoinstake")){ printf("CreateCoinStake : failed to parse kernel\n"); }
                     break;
                 }
-                if (fDebug && GetBoolArg("-printcoinstake"))
-                    printf("CreateCoinStake : parsed kernel type=%d\n", whichType);
+                if (fDebug && GetBoolArg("-printcoinstake")){ printf("CreateCoinStake : parsed kernel type=%d\n", whichType); }
                 if (whichType != TX_PUBKEY && whichType != TX_PUBKEYHASH)
                 {
-                    if (fDebug && GetBoolArg("-printcoinstake"))
-                        printf("CreateCoinStake : no support for kernel type=%d\n", whichType);
+                    if (fDebug && GetBoolArg("-printcoinstake")){ printf("CreateCoinStake : no support for kernel type=%d\n", whichType); }
                     break;  // only support pay to public key and pay to address
                 }
                 if (whichType == TX_PUBKEYHASH) // pay to address type
@@ -1776,8 +1934,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
                     // convert to pay to public key type
                     if (!keystore.GetKey(uint160(vSolutions[0]), key))
                     {
-                        if (fDebug && GetBoolArg("-printcoinstake"))
-                            printf("CreateCoinStake : failed to get key for kernel type=%d\n", whichType);
+                        if (fDebug && GetBoolArg("-printcoinstake")){ printf("CreateCoinStake : failed to get key for kernel type=%d\n", whichType); }
                         break;  // unable to find corresponding public key
                     }
                     scriptPubKeyOut << key.GetPubKey() << OP_CHECKSIG;
@@ -1787,15 +1944,13 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
                     valtype& vchPubKey = vSolutions[0];
                     if (!keystore.GetKey(Hash160(vchPubKey), key))
                     {
-                        if (fDebug && GetBoolArg("-printcoinstake"))
-                            printf("CreateCoinStake : failed to get key for kernel type=%d\n", whichType);
+                        if (fDebug && GetBoolArg("-printcoinstake")){ printf("CreateCoinStake : failed to get key for kernel type=%d\n", whichType); }
                         break;  // unable to find corresponding public key
                     }
 
                 if (key.GetPubKey() != vchPubKey)
                 {
-                    if (fDebug && GetBoolArg("-printcoinstake"))
-                        printf("CreateCoinStake : invalid key for kernel type=%d\n", whichType);
+                    if (fDebug && GetBoolArg("-printcoinstake")){ printf("CreateCoinStake : invalid key for kernel type=%d\n", whichType); }
                         break; // keys mismatch
                     }
 
@@ -1808,10 +1963,18 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
                 vwtxPrev.push_back(pcoin.first);
                 txNew.vout.push_back(CTxOut(0, scriptPubKeyOut));
 
-                if (GetWeight(block.GetBlockTime(), (int64_t)txNew.nTime) < GetStakeSplitAge())
+                if( bQPoS_Rules_Actived )
+                {
+                    string sToAddr="";     uint64_t nRztValue=0;
+                    if( GetTxOutCoinAddrAndAmoutByOutId("CreateCoinStake()", (CTransaction)*pcoin.first, pcoin.second, sToAddr, nRztValue) )
+                    {
+                        sMinerAddr = sToAddr;
+                    }else{ break; }
+                }
+
+                if ( !bQPoS_Rules_Actived && GetWeight(block.GetBlockTime(), (int64_t)txNew.nTime) < GetStakeSplitAge() )
                     txNew.vout.push_back(CTxOut(0, scriptPubKeyOut)); //split stake
-                if (fDebug && GetBoolArg("-printcoinstake"))
-                    printf("CreateCoinStake : added kernel type=%d\n", whichType);
+                if (fDebug && GetBoolArg("-printcoinstake")){ printf("CreateCoinStake : added kernel type=%d, sMinerAddr=[%s] \n", whichType, sMinerAddr.c_str()); }
                 fKernelFound = true;
                 break;
             }
@@ -1821,12 +1984,16 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
             break; // if kernel is found stop searching
     }
 
-    if (nCredit == 0 || nCredit > nBalance - nReserveBalance)
+    if( bQPoS_Rules_Actived )
+    {
+        if( !bSystemNodeWallet && (nCredit > nQPoSStake) ){ return false; }
+    }
+    else if( nCredit == 0 || nCredit > nBalance - nReserveBalance )
 	{
 		//if( fDebug ){ printf("CreateCoinStake : nCredit == 0 || nCredit > nBalance - nReserveBalance, return false :(\n"); }
         return false;
-		}
-//if( fDebug ){ printf("CreateCoinStake : pass 1 \n"); }
+	}
+
     BOOST_FOREACH(PAIRTYPE(const CWalletTx*, unsigned int) pcoin, setCoins)
     {
         // Attempt to add more inputs
@@ -1849,7 +2016,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
             if (pcoin.first->vout[pcoin.second].nValue >= GetStakeCombineThreshold())
                 continue;
             // Do not add input that is still too young
-            if (nTimeWeight < nStakeMinAge)
+            if (nTimeWeight < Get_nStakeMinAge(nBestHeight))
                 continue;
 
             txNew.vin.push_back(CTxIn(pcoin.first->GetHash(), pcoin.second));
@@ -1857,7 +2024,8 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
             vwtxPrev.push_back(pcoin.first);
         }
     }
-//if( fDebug ){ printf("CreateCoinStake : pass 2 \n"); }
+
+    int64_t nReward=0;
     // Calculate coin age reward
     {
         uint64_t nCoinAge;
@@ -1865,26 +2033,38 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
         if (!txNew.GetCoinAge(txdb, nCoinAge))
             return error("CreateCoinStake : failed to calculate coin age");
 
-        int64_t nReward = GetProofOfStakeReward(nCoinAge, nFees);
-		//if( fDebug ){ printf("CreateCoinStake : nReward = [%I64u], [%I64u]\n", nReward, getMIN_TX_FEE(nBestHeight)); }
-        if (nReward <= 0)
+        int64_t nNextHeight = nBestHeight + 1;     nReward = GetProofOfStakeReward(nNextHeight, nFees, sMinerAddr);
+		if( fDebug ){ printf("CreateCoinStake : nReward = [%s], [%s], sMinerAddr=[%s] \n", i64tostr(nReward).c_str(), i64tostr(getMIN_TX_FEE(nBestHeight)).c_str(), sMinerAddr.c_str()); }
+        if( !bQPoS_Rules_Actived && (nReward <= 0) )
 		{
 			if( fDebug ){ printf("CreateCoinStake : nReward <= 0, return false :(\n"); }
             return false; }
 
-        if( (nCredit < (MIN_STAKE_TX_AMOUNT * 2)) && (txNew.vout.size() == 3) ){ txNew.vout.pop_back(); }  // 2015.10.06 add
+        if( bQPoS_Rules_Actived )
+        {
+            if( txNew.vout.size() > 2 ){ txNew.vout.pop_back(); }  // 2017.05.30 add
+        }
+		else if( (nCredit < (MIN_STAKE_TX_AMOUNT * 2)) && (txNew.vout.size() == 3) ){ txNew.vout.pop_back(); }  // 2015.10.06 add
 
         nCredit += nReward;
     }
-//if( fDebug ){ printf("CreateCoinStake : pass 3 \n"); }
-    // Set output amount
-    if (txNew.vout.size() == 3)
-    {
-        txNew.vout[1].nValue = (nCredit / 2 / CENT) * CENT;
-        txNew.vout[2].nValue = nCredit - txNew.vout[1].nValue;
+
+    if( bQPoS_Rules_Actived )
+	{
+        CScript scriptPubKeyDef;      scriptPubKeyDef = CScript() << vchDefaultStakeKey << OP_CHECKSIG;
+        txNew.vout.push_back(CTxOut(nReward, scriptPubKeyDef)); //split stake to Default address
+        txNew.vout[1].nValue = nCredit - nReward;      txNew.nTime = GetAdjustedTime();
+        //txNew.vout[2].nValue = nReward;
+	}else{
+        // Set output amount
+        if (txNew.vout.size() == 3)
+        {
+            txNew.vout[1].nValue = (nCredit / 2 / CENT) * CENT;
+            txNew.vout[2].nValue = nCredit - txNew.vout[1].nValue;
+        }
+        else
+            txNew.vout[1].nValue = nCredit;
     }
-    else
-        txNew.vout[1].nValue = nCredit;
 
     // Sign
     int nIn = 0;

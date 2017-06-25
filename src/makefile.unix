@@ -118,6 +118,7 @@ OBJS= \
     obj/keystore.o \
     obj/miner.o \
     obj/main.o \
+    obj/ntp.o \
     obj/net.o \
     obj/protocol.o \
     obj/bitcoinrpc.o \

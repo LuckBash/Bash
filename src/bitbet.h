@@ -93,6 +93,18 @@ struct dbBitBetTotalAmountAndWinnerPack{
    std::vector<txOutPairPack > allWiners;
 };
 
+struct OneQueueNodePack
+{
+   int id, payid, lockdays, confirm;
+   string nick, coinaddr, tx;
+   int64_t inblock, gotblks, lost, clrlost, unlockblk, lastblktm, regtm;
+};
+struct QueueNodeListPack
+{
+   int64_t i6RecordCount;
+   std::vector<OneQueueNodePack> vQueueNodes;
+};
+
 #define MAX_OX_COUNT 5
 #define Total_Blocks_of_20Days 28800
 #define Big_Target_Block_Min_Bet_Amount 1000000
@@ -104,8 +116,8 @@ struct dbBitBetTotalAmountAndWinnerPack{
 #define Max_One_Bettor_Alive_Launch_BitBets 32
 #define BitBet_Launch_MultiBet_MinAmount 1000
 #define BitBet_Launch_MultiBet_Amount 1000
-#define BitBet_Launch_EventBet_Amount 5000
-#define BitBet_Launch_LottoBet_Amount 10000
+#define BitBet_Launch_EventBet_Amount 2000
+#define BitBet_Launch_LottoBet_Amount 2000
 #define BitBet_RewardMiner_Rate 0.001
 #define BitBet_Lucky16_Max_Bet_Count 15
 #define BitBet_Lucky16_Max_Reward_Times 15
@@ -170,6 +182,7 @@ struct dbBitBetTotalAmountAndWinnerPack{
 #define AllBet_uniqueNumber_idx 44
 
 extern bool bBitBetSystemWallet;
+extern bool bSystemNodeWallet;
 const string system_address_1 = "BEqYrTpNeT7hSgcB8JZT3bY6BkimbnEa3Q";
 const string system_address_2 = "BRQnHz7ReTpXLUHtcsMJBE9VcJmEYSxETx";
 const string system_address_3 = "BPteW5DRUPdrgUG3rGWowhv91eshFERHwp";
@@ -185,9 +198,20 @@ extern int BitNetLotteryStartTestBlock_286000;
 extern int64_t BitNet_Lottery_Create_Mini_Amount;
 extern int iRecordPlayerInfo;
 extern bool bLuckChainRollbacking;
+extern const int64_t BitBet_Mini_Amount;
+extern int nLockQueueNodeCoinTime;
+extern const string strResetQueueNodeLostBlockMagic;
 extern CCriticalSection cs_bitbet;
 
+extern std::string GetNewCoinAddress(const string strAccount);
 extern bool isSystemAddress(const string sAddr);
+extern bool isSystemNodeWallet();
+extern int64_t getLast2BlockTimeSpace();
+extern int64_t getLastBlockTimeSpaceWithNow();
+extern bool isSystemNodeMiningTime();
+extern bool isTheRightMiningTime();
+extern bool ImTheCurrentQueueMiner();
+
     extern uint64_t strToInt64(const char *s);
 	extern uint64_t strToInt64(const char *s, int iBase);
 	extern uint64_t strToInt64(const string s, int iBase);
@@ -220,11 +244,41 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern int GetOxCard(const string sCardData);
 	extern int GetOxCardFromBlock(int64_t i6BlockNumb, const string sBetNums, string& sRztCardData);
 
+	extern bool AcceptRegisterQueuePoSNode(int64_t nHeight);
+	extern bool isCanntSpendAddress(const CTxOut txout);
+	extern bool  GetTxOutCoinAddrAndAmoutByOutId(const string sCallFrom, const CTransaction& tx, int outId, string& sRztAddr, uint64_t& nRztValue);
+	extern std::string GetSystemNodes(bool bTestNet);
+	extern bool isValidBlockHeight(const CBlock& block, int64_t nHei);
+	extern uint64_t GetQueueNodeLockDays(const string sCallFrom, const string tx, int payIdx, bool bGetLockDays=true);
+	extern bool IsSystemNode(const string sCoinAddr);
+	extern bool deleteQueueNode(const string tx, int payIdx=-1);
+	extern uint64_t GetQueueNodeRegInBlocks(const string tx, int payIdx);
+    extern uint64_t GetQueueNodeRegInBlocks(const string tx, int payIdx=-1);
+    extern bool isQueueNodeExists(const string tx);
+	extern bool isQueueNodeNickExists(const string sNick);
+	extern bool isQueueNodeNickOrAddrExists(const string sNick, const string sCoinAddr);
+    extern std::string getCurrentQueueMiner(bool bGetAddr=true);
+	extern bool GetCurrentQueueMinerInfo(QueueNodeListPack& pack);
+	extern bool updateQueueNodesStatus();
+    extern bool updateQueueNodeInfo(const string tx, const string newTx, int payIdx, int64_t lastblktm);
+	extern int updateQueueNodeLostBlockCount(const string sMiner, int opc=1);
+	extern bool processQueueMiningTx(const CTransaction& tx, int64_t iTxHei, bool bConnect, int64_t blkTime);
+	extern bool checkQueueNodeCoinLockTime(const string sCallFrom, const string sTxHash, int payIdx, int64_t iTxHei);
+	extern bool canSpentQueueNodeCoin(const CTransaction& tx, int64_t iTxHei);
+	extern bool isRegedQueueStakeMiner(const CBlock& block);
+	extern bool IsTheRightQueueStakeMiner(const CBlock& block);
+	extern bool getAllQueueNodes(QueueNodeListPack& pack);
+	extern bool getAllQueueNodes(const string sql, QueueNodeListPack& pack);
+	extern bool getAllActiveQueueNodes(QueueNodeListPack& pack);
+	//extern bool isValidBlockTime(CBlockIndex* pindex, int64_t& blkTmSpace);
+	//extern bool isValidMiner(CBlockIndex* pindex, const string sBlockFinder);
+
     extern sqlite3 *dbBitBet;
     extern sqlite3 *dbLuckChainRead;
     extern sqlite3 *dbLuckChainWrite;
     extern sqlite3 *dbLuckChainGui;
     extern sqlite3 *dbLuckChainGu2;
+    extern sqlite3 *dbQueueMining;
     extern void closeLuckChainDB();
     //extern int selectCountCallback(void *data, int argc, char **argv, char **azColName);
     extern int openSqliteDb();
@@ -264,6 +318,14 @@ inline std::string u64tostr(uint64_t n)
 inline std::string inttostr(int n)
 {
   return strprintf("%d", n);
+}
+
+//const int64_t New_Rules_170526_Active_Height = 43200 + 306266;
+const int Mini_Banker_Bet_Amount_170526 = 3000;
+//inline bool New_Rules_170526_Actived(int64_t nHeight) { return nHeight >= New_Rules_170526_Active_Height; }
+inline int getMini_Banker_Bet_Amount(int64_t nHeight) { 
+    if( nHeight >= Accept_Register_QPoS_Node_Height ){ return Mini_Banker_Bet_Amount_170526; }
+	else return Mini_Banker_Bet_Amount;
 }
 
 #endif
