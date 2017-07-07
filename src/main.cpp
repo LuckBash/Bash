@@ -66,6 +66,7 @@ const int Queue_Node_Block_Tolerant_Interval = 10;
 const int Queue_Node_Block_Min_Interval = 59;
 const int Queue_Node_Block_Max_Interval = 60 * 2;  // 2 minutes
 const string strRegisterAsNodeMagic = "Register Queue Node:";
+extern int64_t i6NodeStartMicrosTime;
 
 uint256 nBestChainTrust = 0;
 uint256 nBestInvalidTrust = 0;
@@ -1800,14 +1801,14 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
 		{
 			bool bSysNode = IsSystemNode(sBlockFinder);
             if( !bSysNode && (iAmnt < MIN_Queue_Node_AMOUNT) ){ return error("ConnectBlock() : stake coin [%f] < MIN_Queue_Node_AMOUNT, bSysNode=[%d]", dob, bSysNode); }
-			if( !isValidBlockHeight(*this, nHeight) ){ return error("ConnectBlock() : invalid block height"); }
+			//if( !isValidBlockHeight(*this, nHeight, sBlockFinder) ){ return error("ConnectBlock() : invalid block height"); }
 			if( !bSysNode && !isQueueNodeExists(sBlockFinder) ){ return error("ConnectBlock() : Block Finder not reg and not system node"); }
 
 			int64_t tmNow = GetAdjustedTime(),  prevBlkTm = pindex->pprev->GetBlockTime(), blkTmSpace = blkTm - prevBlkTm, tmTolerant=tmNow+Queue_Node_Block_Tolerant_Interval;
 			if( fDebug ){ printf("ConnectBlock() : check for QPoS, nHeight=[%s], blkTmSpace=[%s], blkTm=[%s : %s]=tmNow \n", i64tostr(nHeight).c_str(), i64tostr(blkTmSpace).c_str(), i64tostr(blkTm).c_str(), i64tostr(tmNow).c_str()); }
 			if( (blkTmSpace < Queue_Node_Block_Min_Interval) || (blkTm > tmTolerant) ){ return error("ConnectBlock() : block timestamp wrong"); }
 			bool bLostQueueNode = ( blkTmSpace > Queue_Node_Block_Max_Interval );  // 120, queue node lost, is sys node?
-			string sCurQueueMiner = getCurrentQueueMiner();
+			string sCurQueueMiner = "", sBindIP = "";     GetCurrentQueueMinerAndBindIP(sCurQueueMiner, sBindIP);   //getCurrentQueueMiner();
 			if( fDebug ){ printf("ConnectBlock() : QPoS, bLostQueueNode=[%d], pprev = [%X], bSysNode=[%d], stake from [%s], sCurQueueMiner = [%s] \n", bLostQueueNode, pindex->pprev, bSysNode, sBlockFinder.c_str(), sCurQueueMiner.c_str()); }
 			if( sCurQueueMiner.length() < 33 )  // no active node, accept system node's block
 			{
@@ -2547,16 +2548,17 @@ if( fDebug ){ printf("AcceptBlock %d hi=%d : %d, PassMode %d\n", bPassBlock, (in
 
 		bool bSysNode = IsSystemNode(sBlockFinder);
         if( !bSysNode && (iAmnt < MIN_Queue_Node_AMOUNT) ){ return error("AcceptBlock() : stake coin [%f] < MIN_Queue_Node_AMOUNT, bSysNode=[%d]", dob, bSysNode); }
-		if( !isValidBlockHeight(*this, nHeight) ){ return error("AcceptBlock() : invalid block height"); }
+		//if( !isValidBlockHeight(*this, nHeight, sBlockFinder) ){ return error("AcceptBlock() : invalid block height"); }
 		if( !bSysNode && !isQueueNodeExists(sBlockFinder) ){ return error("AcceptBlock() : Block Finder not reg and not system node"); }
-		//if( !IsTheRightQueueStakeMiner(*this) ){ return error("AcceptBlock() : Block Finder not right :("); }
 
 		int64_t tmNow = GetAdjustedTime(),  prevBlkTm = pindexPrev->GetBlockTime(), blkTmSpace = blkTm - prevBlkTm, tmTolerant=tmNow+Queue_Node_Block_Tolerant_Interval;
 		if( fDebug ){ printf("AcceptBlock() : check for QPoS, nHeight=[%s], blkTmSpace=[%s], blkTm=[%s : %s]=tmNow, sBlockFinder=[%s] \n", i64tostr(nHeight).c_str(), i64tostr(blkTmSpace).c_str(), i64tostr(blkTm).c_str(), i64tostr(tmNow).c_str(), sBlockFinder.c_str()); }
 		if( (blkTmSpace < Queue_Node_Block_Min_Interval) || (blkTm > tmTolerant) ){ return error("AcceptBlock() : block timestamp wrong"); }
 		bool bLostQueueNode = ( blkTmSpace > Queue_Node_Block_Max_Interval );  // 120, queue node lost, is sys node?
-		string sCurQueueMiner = getCurrentQueueMiner();
-		if( fDebug ){ printf("AcceptBlock() : QPoS, bLostQueueNode=[%d], bSysNode=[%d], stake from [%s], sCurQueueMiner = [%s] \n", bLostQueueNode, bSysNode, sBlockFinder.c_str(), sCurQueueMiner.c_str()); }
+		string sCurQueueMiner = "",  sBindIP="";     GetCurrentQueueMinerAndBindIP(sCurQueueMiner, sBindIP);   //getCurrentQueueMiner();
+		bool bValidBindIP = IsValidBlockMinerBindIP(*this, nHeight, sBindIP);
+		if( !bValidBindIP && !bSysNode ){ return error("AcceptBlock() : sCurQueueMiner [%s] binding ip [%s : %s] invalid :(", sCurQueueMiner.c_str(), sBindIP.c_str(), this->blockData.c_str()); }
+		if( fDebug ){ printf("AcceptBlock() : QPoS, bLostQueueNode=[%d], bSysNode=[%d], stake from [%s], sCurQueueMiner = [%s]\n bValidBindIP=[%d], BindIP=[%s : %s] \n", bLostQueueNode, bSysNode, sBlockFinder.c_str(), sCurQueueMiner.c_str(), bValidBindIP, sBindIP.c_str(), this->blockData.c_str()); }
 		if( sCurQueueMiner.length() < 33 )  // no active node, accept system node's block
 		{
 			if( !bSysNode ) return error("AcceptBlock() : sCurQueueMiner [%s] wrong and not a system node", sCurQueueMiner.c_str());
@@ -4130,7 +4132,26 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
 if( fDebug ){ printf("Node %s Network_id [%d] diff with [%d]\n", pfrom->addr.ToString().c_str(), pfrom->vBitNet.v_Network_id, BitNet_Network_id); }
         goto FinalCheck;  //return true;
     }
-	
+	else if( strCommand == "QNodeInfo" )	//  2017.06.30 add
+	{
+		int64_t i6Tm=0;	     std::string sMsg = "", strSign="", strNodeAddr="";
+		try{
+			if( !vRecv.empty() ){ vRecv >> i6Tm; }
+			if( !vRecv.empty() ){ vRecv >> sMsg; }
+			if( !vRecv.empty() ){ vRecv >> strSign; }
+			if( !vRecv.empty() ){ vRecv >> strNodeAddr; }
+			if( fNetDbg ){ printf("Receive [%s] [%s : %s] from %s nid [%s] : [%s] \n", strCommand.c_str(), strNodeAddr.c_str(), sMsg.c_str(), pfrom->addr.ToString().c_str(), i64tostr(i6Tm).c_str(), i64tostr(i6NodeStartMicrosTime).c_str()); }
+			if( i6Tm != i6NodeStartMicrosTime )
+			{
+				//
+			}
+		}
+		catch (std::exception& e) {
+			PrintException(&e, "ProcessMessage(QNodeInfo)...");
+		} catch (...) {
+        //PrintException(NULL, "ProcessMessage(QNodeInfo)...");
+		}
+	}
     else if (strCommand == "addr")
     {
         vector<CAddress> vAddr;

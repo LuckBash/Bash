@@ -137,7 +137,7 @@ inline unsigned int ReceiveFloodSize() { return 1024*GetArg("-maxreceivebuffer",
 inline unsigned int SendBufferSize() { return 1024*GetArg("-maxsendbuffer", 11*1024); }
 
 void AddOneShot(std::string strDest, int bPushFront = 0);	//void AddOneShot(std::string strDest);
-bool RecvLine(SOCKET hSocket, std::string& strLine);
+bool RecvLine(SOCKET hSocket, std::string& strLine, bool bOneLine=true);
 bool GetMyExternalIP(CNetAddr& ipRet);
 void AddressCurrentlyConnected(const CService& addr);
 CNode* FindNode(const CNetAddr& ip);

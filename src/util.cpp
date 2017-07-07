@@ -995,25 +995,19 @@ void PrintExceptionContinue(std::exception* pex, const char* pszThread)
     strMiscWarning = message;
 }
 
-boost::filesystem::path GetDefaultDataDir()
+boost::filesystem::path GetDefaultDataDir_Core()
 {
     namespace fs = boost::filesystem;
     // Windows < Vista: C:\Documents and Settings\Username\Application Data\LuckChain
     // Windows >= Vista: C:\Users\Username\AppData\Roaming\LuckChain
     // Mac: ~/Library/Application Support/LuckChain
     // Unix: ~/.luckchain
+    fs::path pathRet;
 #ifdef WIN32
     // Windows
-    fs::path full_path = GetSpecialFolderPath(CSIDL_APPDATA) / "LuckChain";
-	fs::path pcu_blockChain = fs::current_path() / "BlockChain";
-    bool bcu = fs::exists(pcu_blockChain / "blk0001.dat");
-    if( bcu || (!fs::exists( full_path )) )
-    {
-        return pcu_blockChain;
-    }
-    return full_path;    //return GetSpecialFolderPath(CSIDL_APPDATA) / "LuckChain";
+    pathRet = GetSpecialFolderPath(CSIDL_APPDATA) / "LuckChain";
+    return pathRet;
 #else
-    fs::path pathRet;
     char* pszHome = getenv("HOME");
     if (pszHome == NULL || strlen(pszHome) == 0)
         pathRet = fs::path("/");
@@ -1029,6 +1023,22 @@ boost::filesystem::path GetDefaultDataDir()
     return pathRet / ".luckchain";
 #endif
 #endif
+}
+
+boost::filesystem::path GetDefaultDataDir()
+{
+    namespace fs = boost::filesystem;
+    fs::path full_path = GetDefaultDataDir_Core();
+#ifdef WIN32
+	fs::path pcu_blockChain = fs::current_path() / "BlockChain";
+    bool bcu = fs::exists(pcu_blockChain / "blk0001.dat"), bFullExists = fs::exists( full_path );
+    fs::create_directory(full_path);
+    if( bcu || (!bFullExists) )
+    {
+        return pcu_blockChain;
+    }
+#endif
+    return full_path;
 }
 
 const boost::filesystem::path &GetDataDir(bool fNetSpecific)

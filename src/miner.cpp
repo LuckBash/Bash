@@ -18,6 +18,7 @@ using namespace std;
 
 extern unsigned int nMinerSleep;
 extern bool bTimeSyncedFromNtpServer;
+extern string strLocalPublicIP;
 bool bMiner_SyncBlockChain = false,  bNormalMinerWeight=true;
 uint64_t nEstimateHeight=0;
 
@@ -133,7 +134,14 @@ CBlock* CreateNewBlock(CWallet* pwallet, bool fProofOfStake, int64_t* pFees)
         pblock->nVersion = 6;
 
     bool bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nHeight);
-    if( bQPoS_Rules_Actived ){ pblock->blockData = i64tostr(nHeight); }
+    if( bQPoS_Rules_Actived )
+	{
+		if( Is_QPoS_Rules704_Actived(nHeight) )
+		{
+			if( !bSystemNodeWallet ){ pblock->blockData = strLocalPublicIP; }
+		}
+		else{ pblock->blockData = i64tostr(nHeight); }
+	}
 
     // Create coinbase tx
     CTransaction txNew;
@@ -572,7 +580,7 @@ void StakeMiner(CWallet *pwallet)
     RenameThread("luckchain-miner");
 
     bool fTryToSync = true,  bIgnoreBlocksOfPeers = GetBoolArg("-minerignoreblkofpeers", false);
-    int iQPoSMiniConnects = GetArg("-qposminiconnects", (fTestNet ? 3 : 5));
+    int iQPoSMiniConnects = GetArg("-qposminiconnects", (fTestNet ? 3 : 8));
 
     while (true)
     {
@@ -631,38 +639,41 @@ void StakeMiner(CWallet *pwallet)
         bool bOk = true;
         if( bQPoS_Rules_Actived )
 	    {
-            int iMinNodeCount = iQPoSMiniConnects;      bool bNeedSync = false;
-			if( bSystemNodeWallet )
-			{
-				bNeedSync = nBestHeight < GetNumBlocksOfPeers();  // iMinNodeCount = iQPoSMiniConnects;
-				if( bNeedSync && bIgnoreBlocksOfPeers ){ bNeedSync = false; }
-			}
-			if( (GetNumConnections() < iMinNodeCount) || bNeedSync )
-            {
-                for(int i=0; i<30; i++)
-                {
-                    MilliSleep(500);
-                    if (fShutdown){  return;  }
-                }
-                continue;
-            }
-
-	    	if( !isTheRightMiningTime() ){ bOk = false; }
-		    else
-    		{
-	    		if( !ImTheCurrentQueueMiner() ){ bOk = false; }
-				else{
-				int64_t blkHeight = strToInt64(pblock->blockData.c_str());
-		    	CBlockIndex* pindexPrev = pindexBest;
-			    int64_t nHeight = pindexPrev->nHeight + 1,  blkTm = pblock->GetBlockTime(),  prevBlkTm = pindexPrev->GetBlockTime();
-			    int64_t blkSpace = blkTm - prevBlkTm,  tmNow = GetAdjustedTime();
-			    bOk = (nHeight == blkHeight) && (blkSpace >= Queue_Node_Block_Min_Interval);  // 59
-				/*if( bOk )
-				{
-					blkSpace = tmNow - prevBlkTm;
-				}*/
+            if( strLocalPublicIP.length() < Mini_IP_Length ){ bOk = false; }
+            else{
+                int iMinNodeCount = iQPoSMiniConnects;      bool bNeedSync = false;
+		        if( bSystemNodeWallet )
+			    {
+				    bNeedSync = nBestHeight < GetNumBlocksOfPeers();  // iMinNodeCount = iQPoSMiniConnects;
+				    if( bNeedSync && bIgnoreBlocksOfPeers ){ bNeedSync = false; }
 			    }
-		    }
+			    if( (GetNumConnections() < iMinNodeCount) || bNeedSync )
+                {
+                    for(int i=0; i<30; i++)
+                    {
+                        MilliSleep(500);
+                        if (fShutdown){  return;  }
+                    }
+                    continue;
+                }
+
+	    	    if( !isTheRightMiningTime() ){ bOk = false; }
+		        else
+    		    {
+	    		    if( !ImTheCurrentQueueMiner() ){ bOk = false; }
+    				else{
+	    			//int64_t blkHeight = strToInt64(pblock->blockData.c_str());
+		        	CBlockIndex* pindexPrev = pindexBest;
+			        int64_t nHeight = pindexPrev->nHeight + 1,  blkTm = pblock->GetBlockTime(),  prevBlkTm = pindexPrev->GetBlockTime();
+			        int64_t blkSpace = blkTm - prevBlkTm,  tmNow = GetAdjustedTime();
+			        bOk = (blkSpace >= Queue_Node_Block_Min_Interval);  // bOk = (nHeight == blkHeight) && (blkSpace >= Queue_Node_Block_Min_Interval);  // 59
+    				/*if( bOk )
+	    			{
+		    			blkSpace = tmNow - prevBlkTm;
+			    	}*/
+			        }
+		        }
+			}
     	}
 #ifdef WIN32
         std::string sHash = pblock->GetHash().ToString();

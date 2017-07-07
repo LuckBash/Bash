@@ -52,7 +52,8 @@ extern int fBindPort920;
 extern int fFixedChangeAddress;
 extern int fNewSocketThread;
 extern string s_BlockChain_AdBonus_Dir;
-int64_t nLimitHeight=0;
+int64_t nLimitHeight=0, nKeyDefaultUsed=0;
+extern int64_t i6NodeStartMicrosTime;
 
 string s_Current_Dir = "";
 string s_BlockChain_Dir = "";
@@ -613,7 +614,6 @@ int isBlockChainCompressed(std::string strDataDir, int iDefault)
 	return rzt;
 }
 
-
 /** Initialize bitcoin.
  *  @pre Parameters should be parsed and config file should be read.
  */
@@ -673,7 +673,7 @@ bool AppInit2()
     dw_zip_block = GetArg("-zipblock", 1);
 #else
     fNodebuglog = GetArg("-nodebuglog", 0);
-    dw_zip_block = GetArg("-zipblock", 0);
+    dw_zip_block = GetArg("-zipblock", 1);
 #endif
     dw_zip_limit_size = GetArg("-ziplimitsize", 64);
     dw_zip_txdb = GetArg("-ziptxdb", 0);
@@ -839,7 +839,6 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
     static boost::interprocess::file_lock lock(pathLockFile.string().c_str());
     if (!lock.try_lock())
         return InitError(strprintf(_("Cannot obtain a lock on data directory %s.  LuckChain is probably already running."), strDataDir.c_str()));
-
 #if !defined(WIN32) && !defined(QT_GUI)
     if (fDaemon)
     {
@@ -869,7 +868,9 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
     printf("Using OpenSSL version %s\n", SSLeay_version(SSLEAY_VERSION));
     if (!fLogTimestamps)
         printf("Startup time: %s\n", DateTimeStrFormat("%x %H:%M:%S", GetTime()).c_str());
-    printf("Default data directory %s\n", GetDefaultDataDir().string().c_str());
+
+    boost::filesystem::path pathDefDataDirCore = GetDefaultDataDir_Core();
+    printf("Default data directory %s :: [%s] \n", GetDefaultDataDir().string().c_str(), pathDefDataDirCore.string().c_str());
     printf("Used data directory %s\n", strDataDir.c_str());
 	//printf("BlockChain directory %s\n", s_BlockChain_Dir.c_str());
 	//printf("Ad Bonus directory %s\n", s_BlockChain_AdBonus_Dir.c_str());
@@ -1220,6 +1221,10 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
         }
         exit(0);
     }
+
+#ifndef USE_BITNET
+    sDefWalletAddress = CBitcoinAddress(pwalletMain->vchDefaultKey.GetID()).ToString(); 
+#endif
     //if( filesystem::exists(pcu / "VpnDial.dat") ){ bVpnDialFileExist++; }
     sLuckChainIdentAddress = GetAddressesByAccount(sLuckChain_ident, true);  //"LuckChain-ident"
     sBitChainIdentAddress = sLuckChainIdentAddress;   //GetAddressesByAccount(sBitChain_ident, true);  //"BitChain-ident"
@@ -1264,9 +1269,12 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
         return false;
 
     RandAddSeedPerfmon();
-#ifndef USE_BITNET
-    sDefWalletAddress = CBitcoinAddress(pwalletMain->vchDefaultKey.GetID()).ToString(); 
-#endif
+
+    boost::filesystem::path pathLockDefWalletFile = GetDefaultDataDir_Core() / sDefWalletAddress.substr(9, 16).c_str();
+    FILE* fileDefWallet = fopen(pathLockDefWalletFile.string().c_str(), "a");
+    if( fileDefWallet ) fclose(fileDefWallet);
+    static boost::interprocess::file_lock lockDefWallet(pathLockDefWalletFile.string().c_str());
+    if( !lockDefWallet.try_lock() ){ nKeyDefaultUsed++; }
 
 #ifdef QT_GUI
 	doFastSyncBlock();
@@ -1274,7 +1282,7 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
 
     //// debug print
     printf("mapBlockIndex.size() = %"PRIszu"\n",   mapBlockIndex.size());
-    printf("nBestHeight = %d\n",            nBestHeight);
+    printf("nBestHeight = %d\n",            (int)nBestHeight);
     printf("setKeyPool.size() = %"PRIszu"\n",      pwalletMain->setKeyPool.size());
     printf("mapWallet.size() = %"PRIszu"\n",       pwalletMain->mapWallet.size());
     printf("mapAddressBook.size() = %"PRIszu"\n",  pwalletMain->mapAddressBook.size());
@@ -1312,7 +1320,7 @@ printf("bnQueueMiningProofOfStakeLimit = %s\n", bnQueueMiningProofOfStakeLimit.g
 #endif
 #endif
 
-   openSqliteDb();
+   openSqliteDb();      i6NodeStartMicrosTime = GetTimeMicros();
 
     if (!NewThread(StartNode, NULL))
         InitError(_("Error: could not start node"));
@@ -1326,7 +1334,7 @@ printf("bnQueueMiningProofOfStakeLimit = %s\n", bnQueueMiningProofOfStakeLimit.g
     printf("Done loading\n");
 
     bBitBetSystemWallet = isBitBetSystemWallet();      bSystemNodeWallet = isSystemNodeWallet();
-    if( fDebug ){ printf("bBitBetSystemWallet=[%d], bSystemNodeWallet=[%d] \n", bBitBetSystemWallet, bSystemNodeWallet); }
+    if( fDebug ){ printf("bBitBetSystemWallet=[%d], bSystemNodeWallet=[%d], [%s] [%d] \n", bBitBetSystemWallet, bSystemNodeWallet, i64tostr(i6NodeStartMicrosTime).c_str(), (int)nKeyDefaultUsed); }
 /*	string sExpBetNum="0xcadcbc";  uint64_t u6Num = strToInt64(sExpBetNum, 16);   uint32_t x = u6Num;//sExpBetNum [0xcadcbc :: 0] [0x0] ";
 	uint64_t u62 = strtoll(sExpBetNum.c_str(), NULL, 16);  //strToInt64(sExpBetNum.c_str());
 	if( fDebug ){ printf("init : sExpBetNum [%s :: %s :: %s] [0x%X] \n", sExpBetNum.c_str(), u64tostr(u6Num).c_str(), u64tostr(u62).c_str(), x); } */

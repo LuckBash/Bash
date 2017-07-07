@@ -329,7 +329,9 @@ static const CRPCCommand vRPCCommands[] =
     { "checkoxcard",		    &checkoxcard,    	 true,      false },
     { "regqueuenode",		    &regqueuenode,    	 true,      false },
     { "unlockqueuenode",		    &unlockqueuenode,    	 true,      false },
+    { "bindqnodeip",		    &bindqnodeip,    	 true,      false },
     { "getqueuenodelist",		    &getqueuenodelist,    	 true,      false },
+    { "getqnodelist",		    &getqueuenodelist,    	 true,      false },
 };
 
 CRPCTable::CRPCTable()

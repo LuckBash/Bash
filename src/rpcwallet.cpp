@@ -14,6 +14,7 @@
 #include "bitchain.h"
 #include "bitbet.h"
 #include <fstream>
+#include <boost/algorithm/string.hpp>
 
 #ifdef QT_GUI
 #include "simplecrypt.h"
@@ -4987,23 +4988,30 @@ Value checkoxcard(const Array& params, bool fHelp)
 
 Value regqueuenode(const Array& params, bool fHelp)
 {
-    if (fHelp || params.size() < 3)
+    int ipm = 3;   bool bNeedIP = QNodeNeedBindIP(nBestHeight);
+	if( bNeedIP ){ ipm++; }
+    if (fHelp || params.size() < ipm)
 	{
-		throw runtime_error(
-            "regqueuenode <miner address> <nickname> <lock coin days>\n");
+		throw runtime_error("regqueuenode <miner address> <nickname> <lock coin days> <bind ip address>\n");
 	}
     if( !AcceptRegisterQueuePoSNode(nBestHeight) )
 	{
 		string sErr = strprintf("Please wait until block height equ or big than %d\n", Accept_Register_QPoS_Node_Height);    throw runtime_error(sErr);
 	}
-	string sAddr = params[0].get_str(), sNick = params[1].get_str();   int iLockDays = params[2].get_int();
+	string sAddr = params[0].get_str(), sNick = params[1].get_str(), sIP = "-";   int iLockDays = params[2].get_int();
+	if( params.size() > 3 )
+	{
+		sIP = params[3].get_str();
+		if( (sIP.length() < Mini_IP_Length) || (sIP.length() > 18) ){ throw runtime_error("Invalid IP Address\n"); }
+	}
 	if( iLockDays < 1 ){ iLockDays = 1; }
 	if( (sNick.length() < 1) || (sNick.length() > 32) ){ throw runtime_error("Invalid Nickname\n"); }
+
     CBitcoinAddress address(sAddr);
     if (!address.IsValid() )
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid miner address");
     if( isQueueNodeNickOrAddrExists(sNick, sAddr) ){ throw runtime_error("Nickname or coin address has been registered."); }
-    int bEncrypt = 0;   CWalletTx wtx;    string stxData = strRegisterAsNodeMagic + sAddr + ":" + sNick + ":" + inttostr(iLockDays);
+    int bEncrypt = 0;   CWalletTx wtx;    string stxData = strRegisterAsNodeMagic + sAddr + ":" + sNick + ":" + inttostr(iLockDays) + ":" + sIP;
     if (pwalletMain->IsLocked())
         throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Error: Please enter the wallet passphrase with walletpassphrase first.");
 
@@ -5056,12 +5064,23 @@ struct OneQueueNodePack
    string nick, coinaddr, tx;
    int64_t inblock, gotblks, lost, clrlost, unlockblk, lastblktm;
 }; */
+string GetSecretIPStr(const string sIP)
+{
+	string rzt = sIP;
+	if( rzt.length() > 6 )
+	{
+        std::vector<std::string> vstr;
+        boost::split(vstr, rzt, boost::is_any_of("."));
+		if( vstr.size() > 3 ){ rzt = vstr[0] + ".xxx.xxx." + vstr[3]; }
+	}
+	return rzt;
+}
 Value getqueuenodelist(const Array& params, bool fHelp)
 {
-    /*if (fHelp || params.size() < 1)
+    if (fHelp || params.size() > 1)
 	{
-		throw runtime_error("getqueuenodelist <active>\n");
-	}*/
+		throw runtime_error("getqueuenodelist <only list active nodes>\n");
+	}
 	bool bOnlyActive=false;
 	if( params.size() > 0 )
 	{
@@ -5082,12 +5101,45 @@ Value getqueuenodelist(const Array& params, bool fHelp)
 			one.push_back( Pair("Tx", pack.vQueueNodes[i].tx) );
 			one.push_back( Pair("Register in block numb", pack.vQueueNodes[i].inblock) );
 			one.push_back( Pair("Got blocks", pack.vQueueNodes[i].gotblks) );
+			one.push_back( Pair("Mined BASH", totalMinedCoins(pack.vQueueNodes[i].lockdays, pack.vQueueNodes[i].gotblks)) );
 			one.push_back( Pair("Lost blocks", pack.vQueueNodes[i].lost) );
+			one.push_back( Pair("Reset count", pack.vQueueNodes[i].clrlost) );
 			one.push_back( Pair("Lock days", pack.vQueueNodes[i].lockdays) );
+			one.push_back( Pair("Binding IP", GetSecretIPStr(pack.vQueueNodes[i].ip)) );
 			one.push_back( Pair("Unlock block numb", pack.vQueueNodes[i].unlockblk) );
 			one.push_back( Pair("Last got block time", pack.vQueueNodes[i].lastblktm) );
 			entry.push_back(Pair(sNum, one));
 		}
 	}
     return entry;	
+}
+
+Value bindqnodeip(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() < 2)
+	{
+		throw runtime_error("bindqnodeip <miner address> <bind ip address>\n");
+	}
+	string sAddr = params[0].get_str(), sIP = params[1].get_str();
+    CBitcoinAddress address(sAddr);
+    if (!address.IsValid() )
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid miner address");
+
+	string sTm = i64tostr( GetAdjustedTime() ), sMsg = sAddr + "," + sIP + "," + sTm;
+	string sSign = signMessage(sAddr, sMsg);
+	if( sSign.length() < 80 )
+	{
+		string sErr = strprintf("Sign message error, sAddr=[%s] not yours ? sign = [%s] \n", sAddr.c_str(), sSign.c_str());      throw runtime_error(sErr);
+	}
+    int bEncrypt = 0;   CWalletTx wtx;    string stxData = strBindingNodeIPMagic + sAddr + ":" + sIP + ":" + sTm + ":" + sSign;
+    if (pwalletMain->IsLocked())
+        throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Error: Please enter the wallet passphrase with walletpassphrase first.");
+
+    CBitcoinAddress defAddr(sDefWalletAddress);
+	int64_t nAmount = 1 * COIN;
+	string strError = pwalletMain->SendMoneyToDestination(defAddr.Get(), nAmount, wtx, stxData, bEncrypt);
+    if (strError != "")
+        throw JSONRPCError(RPC_WALLET_ERROR, strError);
+
+    return wtx.GetHash().GetHex();
 }

@@ -251,5 +251,7 @@ extern json_spirit::Value bitbetcmd(const json_spirit::Array& params, bool fHelp
 extern json_spirit::Value checkoxcard(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value regqueuenode(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value unlockqueuenode(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value bindqnodeip(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value getqueuenodelist(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value getqnodelist(const json_spirit::Array& params, bool fHelp);
 #endif

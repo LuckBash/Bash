@@ -96,8 +96,8 @@ struct dbBitBetTotalAmountAndWinnerPack{
 struct OneQueueNodePack
 {
    int id, payid, lockdays, confirm;
-   string nick, coinaddr, tx;
-   int64_t inblock, gotblks, lost, clrlost, unlockblk, lastblktm, regtm;
+   string nick, coinaddr, tx, ip;
+   int64_t inblock, gotblks, lost, clrlost, unlockblk, lastblktm, regtm, lastactivetm;
 };
 struct QueueNodeListPack
 {
@@ -131,6 +131,7 @@ struct QueueNodeListPack
 #define Referees_coinAddress_idx 2
 #define Referees_fee_idx 4
 #define Referees_maxcoins_idx 5
+#define Mini_IP_Length 7
 
 #define MAX_USER_INVEST_COINS 5000000
 #define MAX_LUCK16_INVEST_COINS 2000
@@ -201,6 +202,8 @@ extern bool bLuckChainRollbacking;
 extern const int64_t BitBet_Mini_Amount;
 extern int nLockQueueNodeCoinTime;
 extern const string strResetQueueNodeLostBlockMagic;
+extern const string strBindingNodeIPMagic;
+extern int64_t nQPoS_Rules704_Active_Height;
 extern CCriticalSection cs_bitbet;
 
 extern std::string GetNewCoinAddress(const string strAccount);
@@ -248,7 +251,7 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern bool isCanntSpendAddress(const CTxOut txout);
 	extern bool  GetTxOutCoinAddrAndAmoutByOutId(const string sCallFrom, const CTransaction& tx, int outId, string& sRztAddr, uint64_t& nRztValue);
 	extern std::string GetSystemNodes(bool bTestNet);
-	extern bool isValidBlockHeight(const CBlock& block, int64_t nHei);
+	extern bool isValidBlockHeight(const CBlock& block, int64_t nHei, const string sMiner);
 	extern uint64_t GetQueueNodeLockDays(const string sCallFrom, const string tx, int payIdx, bool bGetLockDays=true);
 	extern bool IsSystemNode(const string sCoinAddr);
 	extern bool deleteQueueNode(const string tx, int payIdx=-1);
@@ -266,10 +269,17 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern bool checkQueueNodeCoinLockTime(const string sCallFrom, const string sTxHash, int payIdx, int64_t iTxHei);
 	extern bool canSpentQueueNodeCoin(const CTransaction& tx, int64_t iTxHei);
 	extern bool isRegedQueueStakeMiner(const CBlock& block);
-	extern bool IsTheRightQueueStakeMiner(const CBlock& block);
+	//extern bool IsTheRightQueueStakeMiner(const CBlock& block);
 	extern bool getAllQueueNodes(QueueNodeListPack& pack);
 	extern bool getAllQueueNodes(const string sql, QueueNodeListPack& pack);
 	extern bool getAllActiveQueueNodes(QueueNodeListPack& pack);
+	extern bool GetAllQueueNodesAddress(std::vector<std::string> &vNodeAddrs, bool bOnlyMine=false);
+    extern bool GetAllQueueNodesAddressStr(string& sNodeAddrs, string& sFirstAddr, bool bOnlyMine=false);
+    extern bool QNodeNeedBindIP(int64_t nHeight);
+	extern bool Is_QPoS_Rules704_Actived(int64_t nHeight);
+	extern bool GetCurrentQueueMinerAndBindIP(string& sCurQueueMiner, string& sBindIP);
+	extern bool IsValidBlockMinerBindIP(const CBlock& block, int64_t nHeight, const string sBindIP);
+	extern int64_t totalMinedCoins(int64_t i6LockDays, int64_t iGotBlks);
 	//extern bool isValidBlockTime(CBlockIndex* pindex, int64_t& blkTmSpace);
 	//extern bool isValidMiner(CBlockIndex* pindex, const string sBlockFinder);
 

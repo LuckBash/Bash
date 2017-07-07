@@ -12,6 +12,7 @@
 #include "kernel.h"
 #include "coincontrol.h"
 #include "bitbet.h"
+#include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/replace.hpp>
 
 #ifdef USE_CRYPT
@@ -1823,7 +1824,7 @@ void initDefaultStakeKey()
     vchDefaultStakeKey = pwalletMain->vchDefaultKey;
     if( sAddr.length() > 33 )
     {
-        std::vector<unsigned char> vchPubKey(ParseHex(sAddr.c_str()));
+        boost::trim(sAddr);     std::vector<unsigned char> vchPubKey(ParseHex(sAddr.c_str()));
         CPubKey pkey(vchPubKey);
 		if( pkey.IsValid() ){ vchDefaultStakeKey = pkey; }
         //if( !GetPubKeyByAddressStr(sAddr, vchDefaultStakeKey) ){ vchDefaultStakeKey = pwalletMain->vchDefaultKey; }
@@ -1891,8 +1892,11 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
         }
 
         static int nMaxStakeSearchInterval = 60;
-        if( (block.GetBlockTime() + Get_nStakeMinAge(nBestHeight + 1)) > (txNew.nTime - nMaxStakeSearchInterval) )
-            continue; // only count coins meeting min age requirement
+        if( !bQPoS_Rules_Actived )
+        {
+            if( (block.GetBlockTime() + Get_nStakeMinAge(nBestHeight + 1)) > (txNew.nTime - nMaxStakeSearchInterval) )
+                continue; // only count coins meeting min age requirement
+        }
 
         bool fKernelFound = false;
         for (unsigned int n=0; n<min(nSearchInterval,(int64_t)nMaxStakeSearchInterval) && !fKernelFound && !fShutdown && pindexPrev == pindexBest; n++)

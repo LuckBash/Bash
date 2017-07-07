@@ -103,7 +103,7 @@ double fVpn_Btc_price = 0.0;
 int bUpdate_price_now = 0;
 
 std::string sQkl_domain = "www.qkl.im";  // www.qkl.io
-int BitNet_Version = 20170624;
+int BitNet_Version = 20170706;
 int BitNet_Network_id = 2;  // LuckChain = 2
 bool bTimeSyncedFromNtpServer = false;
 
@@ -498,7 +498,7 @@ CAddress GetLocalAddress(const CNetAddr *paddrPeer)
     return ret;
 }
 
-bool RecvLine(SOCKET hSocket, string& strLine)
+bool RecvLine(SOCKET hSocket, string& strLine, bool bOneLine)
 {
     strLine = "";
     while (true)
@@ -509,7 +509,7 @@ bool RecvLine(SOCKET hSocket, string& strLine)
         {
             if (c == '\n')
                 continue;
-            if (c == '\r')
+            if ( bOneLine && (c == '\r') )
                 return true;
             strLine += c;
             if (strLine.size() >= 9000)
@@ -715,7 +715,7 @@ bool GetMyExternalIP(CNetAddr& ipRet)
     const char* pszKeyword;
 
     for (int nLookup = 0; nLookup <= 1; nLookup++)
-    for (int nHost = 0; nHost <= 2; nHost++)
+    for (int nHost = 0; nHost < 5; nHost++)
     {
         // We should be phasing out our use of sites like these.  If we need
         // replacements, we should ask for volunteers to put this simple
@@ -725,9 +725,9 @@ bool GetMyExternalIP(CNetAddr& ipRet)
         {
             int64_t i62 = GetTime();   string sTm = i64tostr(i62);
             string sRzt="", sUrl = "/ip.php?tm=" + sTm;
-            if( GetStrFromUrl("faucet.luckchain.org", 80, sUrl, sRzt) )
+            if( GetStrFromUrl("luckcha.in", 80, sUrl, sRzt) )
             {
-                printf("GetMyExternalIP() received [%s]\n", sRzt.c_str());
+                if( fDebug ){ printf("GetMyExternalIP() from luckcha.in received [%s]\n", sRzt.c_str()); }
                 if( sRzt.length() > 6 )  // 1.1.1.1
                 {
                     CService addr(sRzt, 0, true);
@@ -737,6 +737,36 @@ bool GetMyExternalIP(CNetAddr& ipRet)
             }
         }
         else if (nHost == 1)
+        {
+            int64_t i62 = GetTime();   string sTm = i64tostr(i62);
+            string sRzt="", sUrl = "/ip.php?tm=" + sTm;
+            if( GetStrFromUrl("myip.site", 80, sUrl, sRzt) )
+            {
+                if( fDebug ){ printf("GetMyExternalIP() from myip.site received [%s]\n", sRzt.c_str()); }
+                if( sRzt.length() > 6 )  // 1.1.1.1
+                {
+                    CService addr(sRzt, 0, true);
+                    if (!addr.IsValid() || !addr.IsRoutable()){ continue; }
+                    ipRet.SetIP(addr);    return true;
+                }
+            }
+        }
+        else if (nHost == 2)
+        {
+            int64_t i62 = GetTime();   string sTm = i64tostr(i62);
+            string sRzt="", sUrl = "/ip.php?tm=" + sTm;
+            if( GetStrFromUrl("ip.luckchain.org", 80, sUrl, sRzt) )
+            {
+                if( fDebug ){ printf("GetMyExternalIP() from ip.luckchain.org received [%s]\n", sRzt.c_str()); }
+                if( sRzt.length() > 6 )  // 1.1.1.1
+                {
+                    CService addr(sRzt, 0, true);
+                    if (!addr.IsValid() || !addr.IsRoutable()){ continue; }
+                    ipRet.SetIP(addr);    return true;
+                }
+            }
+        }
+        else if (nHost == 3)
         {
             addrConnect = CService("91.198.22.70",80); // checkip.dyndns.org
 
@@ -755,7 +785,7 @@ bool GetMyExternalIP(CNetAddr& ipRet)
 
             pszKeyword = "Address:";
         }
-        else if (nHost == 2)
+        else if (nHost == 4)
         {
             addrConnect = CService("74.208.43.192", 80); // www.showmyip.com
 
@@ -782,16 +812,25 @@ bool GetMyExternalIP(CNetAddr& ipRet)
     return false;
 }
 
+string strLocalPublicIP("");
 void ThreadGetMyExternalIP(void* parg)
 {
     // Make this thread recognisable as the external IP detection thread
     RenameThread("luckchain-ext-ip");
-
-    CNetAddr addrLocalHost;
-    if (GetMyExternalIP(addrLocalHost))
+    while( !fShutdown )
     {
-        printf("GetMyExternalIP() returned %s\n", addrLocalHost.ToStringIP().c_str());
-        AddLocal(addrLocalHost, LOCAL_HTTP);
+        CNetAddr addrLocalHost;
+        if (GetMyExternalIP(addrLocalHost))
+        {
+            strLocalPublicIP = addrLocalHost.ToStringIP();
+            printf("GetMyExternalIP() returned [%s] \n", strLocalPublicIP.c_str());
+            AddLocal(addrLocalHost, LOCAL_HTTP);      return;
+        }
+        for( int i=0; i<20; i++ )
+        {
+            if( fShutdown ){ return; }
+            MilliSleep(500);
+        }
     }
 }
 
@@ -897,7 +936,7 @@ void ThreadGetVpnPrice(void* parg)
     }
 }
 
-string sTimeServer = "";      int NtpIdx=0;     bool bTimeServerInited=false;
+string sTimeServer = "";      int NtpIdx=0;     bool bTimeServerInited=false;   int64_t nLastSyncNTP_time=0;
 void ThreadSyncNtpTime(void* parg)
 {
     // Make this thread recognisable as the external IP detection thread
@@ -915,18 +954,18 @@ void ThreadSyncNtpTime(void* parg)
     std::vector<std::string >::iterator unque_it  = std::unique(ntpServers.begin(), ntpServers.end());  
     ntpServers.erase(unque_it, ntpServers.end());      ntpServers.insert(ntpServers.begin(), "cn.pool.ntp.org");
     if( fDebug ){ printf("ThreadSyncNtpTime :: server count=[%d] \n", ntpServers.size()); }
-	int ntpCount = ntpServers.size();     int64_t i61 = 0;      string sNewNtp="";      sTimeServer = ntpServers[NtpIdx];  //GetArg("-timeserver", "cn.pool.ntp.org");
+	int ntpCount = ntpServers.size();     string sNewNtp="";      sTimeServer = ntpServers[NtpIdx];  //GetArg("-timeserver", "cn.pool.ntp.org");
 	bTimeServerInited = true;
 	try{
 		while( !fShutdown )
 		{
 			int64_t i62 = GetTime();
-			if( (i62 - i61) > 99 )   // 99 seconds sync once
+			if( (i62 - nLastSyncNTP_time) > 99 )   // 99 seconds sync once
 			{
 				int64_t tmOffSet =0, tm6 = syncNtpTime(sTimeServer), i6tm2= time(NULL);
 				if( tm6 > 0 )
 				{
-					sNewNtp="";   tmOffSet = tm6 - i6tm2;   i61 = i62;   bTimeSyncedFromNtpServer=true;    SetTimeOffset(tmOffSet);
+					sNewNtp="";   tmOffSet = tm6 - i6tm2;   nLastSyncNTP_time = i62;   bTimeSyncedFromNtpServer=true;    SetTimeOffset(tmOffSet);
 				}
 				else if( ntpCount > 1 )  // multi ntp servers, swith to next
 				{
@@ -4025,6 +4064,7 @@ void static Discover()
         NewThread(ThreadGetMyExternalIP, NULL);
 }
 
+extern int64_t nKeyDefaultUsed;
 extern void GenerateBashcoins(bool fGenerate, CWallet* pwallet);
 void StartNode(void* parg)
 {
@@ -4101,15 +4141,12 @@ void StartNode(void* parg)
         printf("Error; NewThread(ThreadDumpAddress) failed\n");
 
     // Mine proof-of-stake blocks in the background
+    bool bStaking=false;
 #ifdef QT_GUI
-    if (!GetBoolArg("-staking", true))
-#else
-    if (!GetBoolArg("-staking", false))
+    bStaking = true;
 #endif
-        printf("Staking disabled\n");
-    else
-        if (!NewThread(ThreadStakeMiner, pwalletMain))
-            printf("Error: NewThread(ThreadStakeMiner) failed\n");
+    if( (nKeyDefaultUsed) || !GetBoolArg("-staking", bStaking) ){ printf("Staking disabled\n"); }
+    else if (!NewThread(ThreadStakeMiner, pwalletMain)){ printf("Error: NewThread(ThreadStakeMiner) failed\n"); }
 
 }
 
@@ -4233,4 +4270,21 @@ void RelayTransaction(const CTransaction& tx, const uint256& hash, const CDataSt
     }
 
     RelayInventory(inv);
+}
+
+int64_t i6NodeStartMicrosTime=0;
+void RelayMyQNodeInfo(string sMsg, string strSign, string strNodeAddr)
+{
+    try{
+        LOCK(cs_vNodes);
+        BOOST_FOREACH(CNode* pnode, vNodes)
+        {
+            pnode->PushMessage("QNodeInfo", i6NodeStartMicrosTime, sMsg, strSign, strNodeAddr);
+        }
+    }
+    catch (std::exception& e) {
+        PrintException(&e, "RelayMyNodeInfo()");
+    } catch (...) {
+        //PrintException(NULL, "RelayMyNodeInfo()");
+    }	
 }

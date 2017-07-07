@@ -40,6 +40,7 @@ const std::string BitBet_Magic("BitBet:");
 const std::string BitBet_CMD_Magic("BitBetCMD:");
 const string BitBetBurnAddress("B4T5ciTCkWauSqVAcVKy88ofjcSasUkSYU");
 const string strBitNetLotteryMagic = "BitLottery:";
+const string strBindingNodeIPMagic = "Binding Node IP:";
 const int BitBetBeginEndBlockSpace_10 = 10;
 const int64_t BitBet_Mini_Amount = 10;  //MIN_TXOUT_AMOUNT;   // 100 * COIN
 const int64_t  Balanced_Mining_Amount = 5000000 * COIN;
@@ -551,7 +552,8 @@ void buildNodesDb()
 					",[unlockblk] bigint DEFAULT 0"
 					",[lastblktm] bigint DEFAULT 0"
 					",[confirm] int DEFAULT 0"
-					",[regtm] bigint DEFAULT 0);";
+					",[regtm] bigint DEFAULT 0"
+					",[ip] varchar(18) default '-', [lastactivetm] bigint DEFAULT 0);";
    char* pe = 0;
    int rc = sqlite3_exec(dbQueueMining, sql.c_str(), NULL, NULL, &pe);
    if( fDebug ){ printf("buildNodesDb :: [%s] \n [%d] [%s]\n", sql.c_str(), rc, pe); }
@@ -674,7 +676,7 @@ void buildLuckChainDb()
 			",[db_ver] varchar, [best_blknum] bigint);";
    rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, NULL);
 //sql = "insert Settings set Address_for_referee='BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx', db_ver='1.1012';";
-   sql = "INSERT INTO Settings (Address_for_referee, db_ver, best_blknum) VALUES ('BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx', '1.1211', 0);"; 
+   sql = "INSERT INTO Settings (Address_for_referee, db_ver, best_blknum) VALUES ('BQFZPLSdySUxpMTAdpF5uhXVKU9vQLxKtx', '1.1230', 0);"; 
    pe = 0;      rc = sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, NULL, &pe);
    if( fDebug ){ printf("buildLuckChainDb :: Settings :: [%s] \n [%d] [%s]\n", sql.c_str(), rc, pe); }
    if( pe ){ sqlite3_free(pe);    pe=0; }
@@ -770,7 +772,9 @@ int openSqliteDb()
 		sBackupLuckChainDbFn = strprintf("%s/%s.db", sDataDbDir.c_str(), i64tostr(i6BackupLuckChainDb_BlkNum).c_str());
 	}
 
-    const char* pLuckChainDb = sLuckChainDb.c_str();      string sLuckChainDbInAppDir = "luckchain.db";   	filesystem::path pathLuckChainDbOrg = sLuckChainDbInAppDir;
+    const char* pLuckChainDb = sLuckChainDb.c_str();
+#ifdef WIN32
+    string sLuckChainDbInAppDir = "luckchain.db";   	filesystem::path pathLuckChainDbOrg = sLuckChainDbInAppDir;
 	if( filesystem::exists(pathLuckChainDbOrg) )
 	{
 		pLuckChainDb = sLuckChainDbInAppDir.c_str();
@@ -787,6 +791,7 @@ int openSqliteDb()
 			}
 		}
 	}
+#endif
 	sLuckChainDbFn = pLuckChainDb;
 
 //if( fDebug ){ printf("---> openSqliteDb, thread safe = [%d] [%s], bAllBetsExist=[%d]  \n", rcSafe, pLuckChainDb, bAllBetsExist); }
@@ -886,6 +891,14 @@ int openSqliteDb()
 		if( fDebug ){ printf("db_ver[%f] < 1.121100, upgrade \n", f); }
 		sql = "alter table Settings add best_blknum bigint default 0;";               sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
 		sql = "update Settings set best_blknum=0, db_ver='1.1211';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
+   }
+   
+   f3 = 1.123000;   // 2017.06.30 add
+   if( f < f3 )
+   {
+		if( fDebug ){ printf("db_ver[%f] < 1.123000, upgrade \n", f); }
+		sql = "alter table Nodes add ip varchar(18) default '-'; alter table Nodes add lastactivetm bigint default 0;";      sqlite3_exec(dbQueueMining, sql.c_str(), NULL, 0, NULL);
+		sql = "update Nodes set ip='-', lastactivetm=0;";      sqlite3_exec(dbQueueMining, sql.c_str(), NULL, 0, NULL);      sql = "update Settings set db_ver='1.1230';";      sqlite3_exec(dbLuckChainWrite, sql.c_str(), NULL, 0, NULL);
    }
 
    
@@ -3916,11 +3929,23 @@ bool IsSystemNode(const string sCoinAddr)
 	return (sNodes.find(sCoinAddr) != string::npos);
 }
 
+int64_t n6IPHeight=0;
+int64_t GetBindIPRuleActiveBlocks()
+{
+    if( n6IPHeight == 0 ){ n6IPHeight = GetArg( "-bindipactivedheight", (fTestNet ? 1 : 350230) ); }
+	return n6IPHeight;
+}
+bool QNodeNeedBindIP(int64_t nHeight)
+{
+	int64_t n6 = GetBindIPRuleActiveBlocks();
+	return (nHeight >= n6);
+}
+
 int64_t GetPerDayLockBlocks()
 {
     return ( fTestNet ? 60 : 1440 );
 }
-bool insertQueueNode(int64_t inBlock, int iLockDays, string sNick, string coinAddr, string tx, int payIdx, int64_t regTime)
+bool insertQueueNode(int64_t inBlock, int iLockDays, string sNick, string coinAddr, string tx, int payIdx, int64_t regTime, string strIP)
 {
    bool rzt = false;
    LOCK(cs_queue_mining);  // 2017.05.30
@@ -3928,8 +3953,8 @@ bool insertQueueNode(int64_t inBlock, int iLockDays, string sNick, string coinAd
    int64_t i6BlkSpace=inBlock, i6RuleHei = GetQueuePoSRulesActiveHeight();
    if( inBlock < i6RuleHei ){ i6BlkSpace = i6RuleHei; }
    int64_t unlockBlk = (GetPerDayLockBlocks() * iLockDays) + i6BlkSpace;
-   string s = "'" + sNick + "', " + i64tostr(inBlock) + ", " + inttostr(iLockDays) + ", " + i64tostr(unlockBlk) + ", '" + coinAddr + "', '" + tx + "', " + inttostr(payIdx) + ", 0, " + i64tostr(regTime);
-   string sql = "INSERT INTO Nodes (nick, inblock, lockdays, unlockblk, coinaddr, tx, payid, confirm, regtm) VALUES (" + s + ");";
+   string s = "'" + sNick + "', " + i64tostr(inBlock) + ", " + inttostr(iLockDays) + ", " + i64tostr(unlockBlk) + ", '" + coinAddr + "', '" + tx + "', " + inttostr(payIdx) + ", 0, " + i64tostr(regTime) + ", '" + strIP + "'";
+   string sql = "INSERT INTO Nodes (nick, inblock, lockdays, unlockblk, coinaddr, tx, payid, confirm, regtm, ip) VALUES (" + s + ");";
    char* pe = 0;
    int rc = sqlite3_exec(dbQueueMining, sql.c_str(), 0, 0, &pe);      rzt = (rc == SQLITE_OK);
    if( fDebug ){ printf("insertQueueNode :: [%d] [%s] [%s]\n", rc, pe, sql.c_str()); }
@@ -4055,18 +4080,40 @@ int updateQueueNodeLostBlockCount(const string sMiner, int opc)
 	return rc;
 }
 
+int updateQueueNodeIpAddress(const string sMiner, const string sIP)
+{
+    LOCK(cs_queue_mining);  // 2017.05.30
+    string sql = "update Nodes set ip='" + sIP + "' where coinaddr='" + sMiner + "';";
+	int rc = sqlite3_exec(dbQueueMining, sql.c_str(), NULL, 0, NULL);
+	if( fDebug ){ printf("updateQueueNodeIpAddress:: rzt=[%d] [%s] \n", rc, sql.c_str()); }
+	return rc;
+}
+
 string getCurrentQueueMiner(bool bGetAddr)
 {
     string rzt="";
     LOCK(cs_queue_mining);  // 2017.05.30
-	//int64_t i6 = nBestHeight - 8;
-    // string sql = "select * from Nodes where lost<1 and inblock<" + i64tostr(i6) + " order by lastblktm asc, id asc limit 1;";
-    string sql = "select * from Nodes where lost<1 and confirm>9 order by lastblktm asc, id asc limit 1;";
+    bool bNeedIP = QNodeNeedBindIP(nBestHeight);
+    // string sql = "select * from Nodes where lost<1 and confirm>9 order by lastblktm asc, id asc limit 1;";
+    string sql = "select * from Nodes where lost<1 and confirm>9";
+    if( bNeedIP ){ sql = sql + " and length(ip) > 6"; }
+    sql = sql +  " order by lastblktm asc, id asc limit 1;";
 	dbOneResultCallbackPack pack = {OneResultPack_STR_TYPE, (bGetAddr ? 3 : 4), 0, 0, (bGetAddr ? "coinaddr" : "tx"), ""};  // 3 = coinaddr
 	getOneResultFromDb(dbQueueMining, sql, pack);
 	if( pack.fDone > 0 ) { rzt = pack.sRzt; }
 	if( fDebug ){ printf("getCurrentQueueMiner:: rzt=[%s] [%s] \n", rzt.c_str(), sql.c_str()); }
     return rzt;
+}
+
+bool GetCurrentQueueMinerAndBindIP(string& sCurQueueMiner, string& sBindIP)
+{
+	QueueNodeListPack pack;     bool rzt = GetCurrentQueueMinerInfo(pack);
+	if( rzt )
+	{
+		sBindIP = pack.vQueueNodes[0].ip;     sCurQueueMiner = pack.vQueueNodes[0].coinaddr;
+	}
+	if( fDebug ){ printf("GetCurrentQueueMinerAndBindIP() :: rzt=%d, sCurQueueMiner=[%s], sBindIP=[%s] \n", rzt, sCurQueueMiner.c_str(), sBindIP.c_str()); }
+	return rzt;
 }
 
 /* int processTxInForQueueMining(const std::vector<CTxIn> vin)
@@ -4087,7 +4134,7 @@ string getCurrentQueueMiner(bool bGetAddr)
 	return rzt;
 } */
 
-bool isValidRegQueueNodeTx(const CTransaction& tx, string& sCoinAddr, string& sNick, int& payIdx, int& iLockDays)
+bool isValidRegQueueNodeTx(const CTransaction& tx, string& sCoinAddr, string& sNick, string& sIP, int& payIdx, int& iLockDays)
 {
     bool rzt=false;   string sData = tx.chaindata.c_str();   payIdx=0;   iLockDays=1;
     if( sData.length() < 55 ){ return rzt; }
@@ -4099,14 +4146,21 @@ bool isValidRegQueueNodeTx(const CTransaction& tx, string& sCoinAddr, string& sN
 	if( SplitCmdParamFromStr(sData, bbc, strRegisterAsNodeMagic, ":") > 2 )
 	{
 		sCoinAddr = bbc.cmdName;   sNick = bbc.p1;      if( bbc.p2.length() > 0 ){ iLockDays = strToInt(bbc.p2, 10); }
-		payIdx = GetCoinAddrInTxOutIndex(tx, sCoinAddr, MIN_Queue_Node_AMOUNT);
+		sIP = bbc.p3;     payIdx = GetCoinAddrInTxOutIndex(tx, sCoinAddr, MIN_Queue_Node_AMOUNT);
+		if( sIP.length() < Mini_IP_Length ){ sIP = "-"; }
 		rzt = payIdx >= 0;  // Check Bet Amount, =-1 is invalid
 		if( fDebug ){ printf( "isValidRegQueueNodeTx: tx data = [%s], rzt=[%d], [%s] [%s] \n", sData.c_str(), rzt, sCoinAddr.c_str(), sNick.c_str()); }
 	}
 	return rzt;
 }
 const string strResetQueueNodeLostBlockMagic = "Reset Queue Node:";
-bool resetQueueNodeLostBlkCount(const CTransaction& tx)
+int64_t nQPoS_Rules704_Active_Height = 356000;
+bool Is_QPoS_Rules704_Actived(int64_t nHeight)
+{
+	if( fTestNet ){ return (nHeight >= 1); }
+	else{ return (nHeight >= nQPoS_Rules704_Active_Height); }
+}
+bool resetQueueNodeLostBlkCount(const CTransaction& tx, int64_t iTxHei, int64_t blkTime)
 {
     bool rzt=false;   string sData = tx.chaindata.c_str();
 	// sendtoaddresswithmsg mj1fZZydq9LxpDLsBbsWXLKLVxajeResFE 1000000 "Reset Queue Node:mj1fZZydq9LxpDLsBbsWXLKLVxajeResFE:14xxxxx:sign str"
@@ -4118,8 +4172,30 @@ bool resetQueueNodeLostBlkCount(const CTransaction& tx)
 		if( verifyMessage(sCoinAddr, sSign, sMsg) )  // bool verifyMessage(const string strAddress, const string strSign, const string strMessage)
 		{
 		    rzt = (updateQueueNodeLostBlockCount(sCoinAddr, 0) == SQLITE_OK);
+            if(  Is_QPoS_Rules704_Actived(iTxHei) )
+            {
+                string sql = "update Nodes set lastblktm=" + i64tostr(blkTime + 30) + " where coinaddr='" + sCoinAddr + "';";
+                sqlite3_exec(dbQueueMining, sql.c_str(), NULL, 0, NULL);
+            }
 		}
 		if( fDebug ){ printf( "resetQueueNodeLostBlkCount: tx data = [%s], rzt=[%d], [%s] [%s] \n", sData.c_str(), rzt, sCoinAddr.c_str(), sSign.c_str()); }
+	}
+	return rzt;
+}
+
+bool BindingQueueNodeIPAddress(const CTransaction& tx)
+{
+    bool rzt=false;   string sData = tx.chaindata.c_str();
+	//  Binding Node IP:Miner_Address_1: IP_2 : Time_3 | Sign_4
+    BitBetCommand bbc = {"", "", "", "", "", "", "", "", "", "", "", 0};
+	if( SplitCmdParamFromStr(sData, bbc, strBindingNodeIPMagic, ":") > 3 )
+	{
+		string sCoinAddr = bbc.cmdName, sIP = bbc.p1, sTime = bbc.p2, sSign = bbc.p3, sMsg = sCoinAddr + "," + sIP + "," + sTime;
+		if( verifyMessage(sCoinAddr, sSign, sMsg) )  // bool verifyMessage(const string strAddress, const string strSign, const string strMessage)
+		{
+		    rzt = (updateQueueNodeIpAddress(sCoinAddr, sIP) == SQLITE_OK);
+		}
+		if( fDebug ){ printf( "BindingQueueNodeIPAddress: tx data = [%s], rzt=[%d], [%s] [%s] \n", sData.c_str(), rzt, sCoinAddr.c_str(), sSign.c_str()); }
 	}
 	return rzt;
 }
@@ -4146,18 +4222,20 @@ bool processQueueMiningTx(const CTransaction& tx, int64_t iTxHei, bool bConnect,
 {
 	bool rzt=false,  bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(iTxHei), bCoinStake = tx.IsCoinStake(), bAcceptRegNode=AcceptRegisterQueuePoSNode(iTxHei);
 	{
-		string sNick="", sCoinAddr="", sTx = tx.GetHash().ToString(), sData = tx.chaindata;     int payIdx=0, iLockDays=1;
-		bool bRegNode = (!bCoinStake) && isValidRegQueueNodeTx(tx, sCoinAddr, sNick, payIdx, iLockDays);  //  "Register Queue Node:BC3ZJJnM8s93nxY7zeL74RgxTd2t1t9RzX"
+		string sNick="", sCoinAddr="", strIP="", sTx = tx.GetHash().ToString(), sData = tx.chaindata;     int payIdx=0, iLockDays=1;
+		bool bRegNode = (!bCoinStake) && isValidRegQueueNodeTx(tx, sCoinAddr, sNick, strIP, payIdx, iLockDays);  //  "Register Queue Node:BC3ZJJnM8s93nxY7zeL74RgxTd2t1t9RzX"
 		if( bConnect )
 		{
 			if( bRegNode )
 			{
-			    if( bAcceptRegNode && !isQueueNodeNickOrAddrExists(sNick, sCoinAddr) )
+				bool bCanRegQNode=true, bNeedIP = QNodeNeedBindIP(iTxHei);
+				if( bNeedIP && (strIP.length() < Mini_IP_Length) ){ bCanRegQNode=false; }
+			    if( bCanRegQNode && bAcceptRegNode && !isQueueNodeNickOrAddrExists(sNick, sCoinAddr) )
 				{
-				    if( insertQueueNode(iTxHei, iLockDays, sNick, sCoinAddr, sTx, payIdx, tx.nTime) ){ } //NotifyQueueNodeMsg(2, sTx); }
+					if( insertQueueNode(iTxHei, iLockDays, sNick, sCoinAddr, sTx, payIdx, tx.nTime, strIP) ){ } //NotifyQueueNodeMsg(2, sTx); }
 				}
 			}
-			else if( bQPoS_Rules_Actived ){ resetQueueNodeLostBlkCount(tx); }
+			else if( bQPoS_Rules_Actived ){ if( !resetQueueNodeLostBlkCount(tx, iTxHei, blkTime) ){ BindingQueueNodeIPAddress(tx); } }
 			if( bQPoS_Rules_Actived )
 			{
 				if( bCoinStake )
@@ -4228,13 +4306,20 @@ bool canSpentQueueNodeCoin(const CTransaction& tx, int64_t iTxHei)
 	return rzt;
 }
 
-bool isValidBlockHeight(const CBlock& block, int64_t nHei)
+bool IsValidBlockMinerBindIP(const CBlock& block, int64_t nHeight, const string sBindIP)
 {
-    int64_t blkHeight = strToInt64(block.blockData.c_str());
+	bool rzt = true;
+	if( Is_QPoS_Rules704_Actived(nHeight) ){ rzt = (block.blockData == sBindIP); }
+	return rzt;
+}
+
+/*bool isValidBlockHeight(const CBlock& block, int64_t nHei, const string sMiner)
+{
+	int64_t blkHeight = strToInt64(block.blockData.c_str());
 	return (nHei == blkHeight);
 }
 
-/*bool isRegedQueueStakeMiner(const CBlock& block)
+bool isRegedQueueStakeMiner(const CBlock& block)
 {
 	bool rzt=false;   std::string sBlockFinder = "";
 	if( block.IsProofOfStake() )
@@ -4245,7 +4330,7 @@ bool isValidBlockHeight(const CBlock& block, int64_t nHei)
 	}else{ rzt=true; }
 	if(fDebug){ printf("isRegedQueueStakeMiner() : rzt=[%d], sBlockFinder(%s) \n", rzt, sBlockFinder.c_str()); }
 	return rzt;
-}*/
+}
 
 bool IsTheRightQueueStakeMiner(const CBlock& block)
 {
@@ -4259,7 +4344,7 @@ bool IsTheRightQueueStakeMiner(const CBlock& block)
 	}else{ rzt=false; }
 	if(fDebug){ printf("IsTheRightQueueStakeMiner() : rzt=[%d], sBlockFinder=(%s), sCurQueueMiner=[%s] \n", rzt, sBlockFinder.c_str(), sCurQueueMiner.c_str()); }
 	return rzt;
-}
+}*/
 
 /*bool isValidBlockTime(CBlockIndex* pindex, int64_t& blkTmSpace)
 {
@@ -4321,10 +4406,10 @@ struct QueueNodeListPack
 static int getOneQueueNodeCallBack(void *data, int argc, char **argv, char **azColName)
 {
    //if( fDebug ){ printf("getOneQueueNodeCallBack() :: data=[%x], argc=[%d] \n", data, argc); }
-   if( (data != NULL) && (argc > 12) )
+   if( (data != NULL) && (argc > 14) )
    {
       QueueNodeListPack* p = (QueueNodeListPack *)data;
-	  OneQueueNodePack oneNode = { strToInt(argv[0]), strToInt(argv[5]), strToInt(argv[9]), strToInt(argv[12]), argv[1], argv[3], argv[4], strToInt64(argv[2]), strToInt64(argv[6]), strToInt64(argv[7]), strToInt64(argv[8]), strToInt64(argv[10]), strToInt64(argv[11]), strToInt64(argv[13]) };
+	  OneQueueNodePack oneNode = { strToInt(argv[0]), strToInt(argv[5]), strToInt(argv[9]), strToInt(argv[12]), argv[1], argv[3], argv[4], argv[14], strToInt64(argv[2]), strToInt64(argv[6]), strToInt64(argv[7]), strToInt64(argv[8]), strToInt64(argv[10]), strToInt64(argv[11]), strToInt64(argv[13]), strToInt64(argv[15]) };
 	  p->vQueueNodes.push_back(oneNode);
 	  p->i6RecordCount++;
    }
@@ -4343,15 +4428,16 @@ bool getAllQueueNodes(const string sql, QueueNodeListPack& pack)
 {
    return getAllQueueNodes(dbQueueMining, sql, pack);
 }
+//string sql = "select * from Nodes order by lost asc, confirm desc, (length(ip)>6) desc, lastblktm asc, id asc limit 500;";
 bool getAllQueueNodes(QueueNodeListPack& pack)
 {
-    string sql = "select * from Nodes order by id asc limit 500;";  // string sql = "select * from Nodes order by lost asc, lastblktm asc limit 500;";
+    string sql = "select * from Nodes order by lost asc, confirm desc, (length(ip)>6) desc, lastblktm asc, id asc limit 500;";  // string sql = "select * from Nodes order by id asc limit 500;";
     return getAllQueueNodes(dbQueueMining, sql, pack);
 }
 
 bool getAllActiveQueueNodes(sqlite3 *dbOne, QueueNodeListPack& pack)
 {
-    string sql = "select * from Nodes where lost<1 order by lastblktm asc, id asc limit 500;";
+    string sql = "select * from Nodes where lost<1 order by lost asc, confirm desc, (length(ip)>6) desc, lastblktm asc, id asc limit 500;";
     return getAllQueueNodes(dbOne, sql, pack);
 }
 bool getAllActiveQueueNodes(QueueNodeListPack& pack)
@@ -4362,20 +4448,32 @@ bool getAllActiveQueueNodes(QueueNodeListPack& pack)
 
 bool GetCurrentQueueMinerInfo(QueueNodeListPack& pack)
 {
-    string sql = "select * from Nodes where lost<1 and confirm>9 order by lastblktm asc, id asc limit 1;";
+    bool bNeedIP = QNodeNeedBindIP(nBestHeight);
+    string sql = "select * from Nodes where lost<1 and confirm>9";
+    if( bNeedIP ){ sql = sql + " and length(ip) > 6"; }
+	sql = sql + " order by lastblktm asc, id asc limit 1;";
 	bool rzt = getAllQueueNodes(sql, pack);
 	return rzt;
 }
 
+extern string strLocalPublicIP;
 bool ImTheCurrentQueueMiner()
 {
-	bool rzt = false, bSysMiningTime = isSystemNodeMiningTime();     string sCurQueueMiner = "";
+	bool rzt = false, bSysMiningTime = isSystemNodeMiningTime();     string sCurQueueMiner = "", sBindIP="";
 	if( bSysMiningTime ){ rzt = bSystemNodeWallet; }
 	else{
-		sCurQueueMiner = getCurrentQueueMiner();   
-		rzt = ( (sCurQueueMiner.length() < 33) ? false : isMineCoinAddress(sCurQueueMiner) );
+		QueueNodeListPack pack;
+		if( GetCurrentQueueMinerInfo(pack) )
+		{
+			sBindIP = pack.vQueueNodes[0].ip;     sCurQueueMiner = pack.vQueueNodes[0].coinaddr;   //sCurQueueMiner = getCurrentQueueMiner();
+			rzt = ( (sCurQueueMiner.length() < 33) ? false : isMineCoinAddress(sCurQueueMiner) );
+			if( rzt )
+			{
+				if( (strLocalPublicIP.length() < Mini_IP_Length) || (sBindIP.length() < Mini_IP_Length) || (strLocalPublicIP != sBindIP) ){ rzt=false; }
+			}
+		}
 	}
-	if( fDebug ){ printf("ImTheCurrentQueueMiner() :: rzt=%d, bSysMiningTime=[%d],  bSystemNodeWallet=[%d], [%s] \n", rzt, bSysMiningTime, bSystemNodeWallet, sCurQueueMiner.c_str()); }
+	if( fDebug ){ printf("ImTheCurrentQueueMiner() :: rzt=%d, bSysMiningTime=[%d],  bSystemNodeWallet=[%d], [%s], BindIP=[%s :: %s]\n", rzt, bSysMiningTime, bSystemNodeWallet, sCurQueueMiner.c_str(), sBindIP.c_str(), strLocalPublicIP.c_str()); }
 	return rzt;
 }
 
@@ -4414,4 +4512,57 @@ bool isTheRightMiningTime()
 	}
     //return ( (tm >= Queue_Node_Block_Min_Interval) && (tm < Queue_Node_Block_Max_Interval) );
 	return rzt;
+}
+
+bool GetAllQueueNodesAddress(std::vector<std::string> &vNodeAddrs, bool bOnlyMine)
+{
+	QueueNodeListPack pack;     vNodeAddrs.clear();
+	string sql = "select * from Nodes order by lost asc, confirm desc, lastblktm asc, id asc limit 500;";
+   bool rzt = getAllQueueNodes(dbQueueMining, sql, pack);
+   int k = pack.i6RecordCount;
+   if( rzt && (k > 0) )
+   {
+	   for(int i = 0; i < k; i++ )
+	   {
+		   string sAddr  = pack.vQueueNodes[i].coinaddr;
+		   if( bOnlyMine )
+		   {
+			   if( isMineCoinAddress(sAddr) ){ vNodeAddrs.push_back(sAddr); }
+			}
+		   else{ vNodeAddrs.push_back(sAddr); }
+	   }
+   }
+   return rzt;
+}
+
+bool GetAllQueueNodesAddressStr(string& sNodeAddrs, string& sFirstAddr, bool bOnlyMine)
+{
+	sNodeAddrs = "";     sFirstAddr = "";     std::vector<std::string> vNodeAddrs;
+	bool rzt  = GetAllQueueNodesAddress(vNodeAddrs, bOnlyMine);
+	if( rzt )
+	{
+		int k = vNodeAddrs.size();
+		if( k > 0 )
+		{
+			sFirstAddr = vNodeAddrs[0];
+			for(int i = 0; i < k; i++ )
+			{
+				sNodeAddrs = sNodeAddrs  + vNodeAddrs[i];
+				if( (i+1) < k ){ sNodeAddrs = sNodeAddrs + ","; }
+			}
+		}
+	}
+	return rzt;
+}
+
+int64_t totalMinedCoins(int64_t i6LockDays, int64_t iGotBlks)
+{
+	int64_t iCoins=10;
+    if( i6LockDays >= 360 ){ iCoins = 100 * iGotBlks; }  // Lock 360 day, reward 100 BASH
+    else if( i6LockDays >= 180 ){ iCoins = 60 * iGotBlks; }  // Lock 180 day, reward 50 BASH
+    else if( i6LockDays >= 90 ){ iCoins = 40 * iGotBlks; }  // Lock 90 day, reward 40 BASH
+    else if( i6LockDays >= 30 ){ iCoins = 30 * iGotBlks; }  // Lock 30 day, reward 30 BASH
+    else if( i6LockDays >= 10 ){ iCoins = 20 * iGotBlks; }  // Lock 10 day, reward 25 BASH
+    else{ iCoins = 10 * iGotBlks; }  // Lock 1~9 days, reward 20 BASH
+	return iCoins;
 }
