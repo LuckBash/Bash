@@ -1270,11 +1270,12 @@ dw_zip_block = isBlockChainCompressed(strDataDir, dw_zip_block);
 
     RandAddSeedPerfmon();
 
-    boost::filesystem::path pathLockDefWalletFile = GetDefaultDataDir_Core() / sDefWalletAddress.substr(9, 16).c_str();
+    /*boost::filesystem::path pathLockDefWalletFile = GetDefaultDataDir_Core() / sDefWalletAddress.substr(9, 16).c_str();
     FILE* fileDefWallet = fopen(pathLockDefWalletFile.string().c_str(), "a");
     if( fileDefWallet ) fclose(fileDefWallet);
     static boost::interprocess::file_lock lockDefWallet(pathLockDefWalletFile.string().c_str());
-    if( !lockDefWallet.try_lock() ){ nKeyDefaultUsed++; }
+    if( !lockDefWallet.try_lock() ){ nKeyDefaultUsed++; } */
+    if( !LockForSafeMining(sDefWalletAddress) ){ nKeyDefaultUsed++; }
 
 #ifdef QT_GUI
 	doFastSyncBlock();

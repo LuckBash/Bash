@@ -1,6 +1,7 @@
 // Copyright (c) 2012 The LuckChain developers
 #include <algorithm>
 #include <boost/algorithm/string/replace.hpp>
+#include <boost/interprocess/sync/file_lock.hpp>
 #include <string>
 #include "bitbet.h"
 #include <stdio.h>
@@ -4456,6 +4457,31 @@ bool GetCurrentQueueMinerInfo(QueueNodeListPack& pack)
 	return rzt;
 }
 
+string sLockedSafeMiningMiners=" ", sUnlockSafeMiners=" ";
+bool LockForSafeMining(const string sAddr)
+{
+    bool rzt = (sLockedSafeMiningMiners.find(sAddr) != string::npos), r2 = rzt, r3=false;
+    if( !rzt )
+    {
+        r3 = (sUnlockSafeMiners.find(sAddr) == string::npos);
+        if( r3 )
+        {
+            boost::filesystem::path pathLockMinerFile = GetDefaultDataDir_Core() / sAddr.substr(9, 16).c_str();
+            FILE* fileMiner = fopen(pathLockMinerFile.string().c_str(), "a");
+            if( fileMiner ){ fclose(fileMiner); }
+            boost::interprocess::file_lock* lockMiner = new boost::interprocess::file_lock(pathLockMinerFile.string().c_str());  //static boost::interprocess::file_lock lockMiner(pathLockMinerFile.string().c_str());
+            rzt = lockMiner->try_lock();
+            if( rzt ){ sLockedSafeMiningMiners = sLockedSafeMiningMiners + sAddr + ","; }
+            else{
+                delete lockMiner;
+                sUnlockSafeMiners  = sUnlockSafeMiners + sAddr + ",";
+            }
+        }
+    }
+    if( fDebug ){ printf("LockForSafeMining(%s):: rzt=[%d : %d : %d]\n [%s : %s] \n", sAddr.c_str(), rzt, r2, r3, sLockedSafeMiningMiners.c_str(), sUnlockSafeMiners.c_str()); }
+    return rzt;
+}
+
 extern string strLocalPublicIP;
 bool ImTheCurrentQueueMiner()
 {
@@ -4470,6 +4496,7 @@ bool ImTheCurrentQueueMiner()
 			if( rzt )
 			{
 				if( (strLocalPublicIP.length() < Mini_IP_Length) || (sBindIP.length() < Mini_IP_Length) || (strLocalPublicIP != sBindIP) ){ rzt=false; }
+				if( rzt && !LockForSafeMining(sCurQueueMiner) ){ rzt=false; }
 			}
 		}
 	}

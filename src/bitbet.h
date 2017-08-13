@@ -280,6 +280,7 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern bool GetCurrentQueueMinerAndBindIP(string& sCurQueueMiner, string& sBindIP);
 	extern bool IsValidBlockMinerBindIP(const CBlock& block, int64_t nHeight, const string sBindIP);
 	extern int64_t totalMinedCoins(int64_t i6LockDays, int64_t iGotBlks);
+	extern bool LockForSafeMining(const string sAddr);
 	//extern bool isValidBlockTime(CBlockIndex* pindex, int64_t& blkTmSpace);
 	//extern bool isValidMiner(CBlockIndex* pindex, const string sBlockFinder);
 
