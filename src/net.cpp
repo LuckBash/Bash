@@ -103,7 +103,7 @@ double fVpn_Btc_price = 0.0;
 int bUpdate_price_now = 0;
 
 std::string sQkl_domain = "www.qkl.im";  // www.qkl.io
-int BitNet_Version = 20170706;
+int BitNet_Version = 20180328;
 int BitNet_Network_id = 2;  // LuckChain = 2
 bool bTimeSyncedFromNtpServer = false;
 

@@ -1868,7 +1868,7 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
         SyncWithWallets(tx, this, true);
         processQueueMiningTx(tx, pindex->nHeight, true, pindex->GetBlockTime());  // 2017.05.30 add
     }
-    updateQueueNodesStatus();
+    //updateQueueNodesStatus();
     return true;
 }
 
@@ -2140,6 +2140,10 @@ dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
 	notifyReceiveNewBlockMsg( u6Hei, (uint64_t) nTime );  // 2016.10.19 add
 #endif */
 
+// 2018.01.14, 这里 SetBestChainInner函数会调用 ConnectBlock 函数，2018年之前的代码会在 ConnectBlock 函数里面调用 updateQueueNodesStatus 函数清除了到期的节点
+// 但是注意此时 nBestHeight 还没有更新，比如刚刚接收的区块编号是364400，运行到这里时 nBestHeight 是 364399,
+// 2018年改进了代码，改在 AddToBlockIndex 调用 updateQueueNodesStatus 清除到期的节点，在 364400 个块时删除了 BRJBvjB28PRRAWwAcnu2S9ShGnpxmSetaK 节点
+// 导致接受第 364401 个块时（由 BRJBvjB28PRRAWwAcnu2S9ShGnpxmSetaK 生成）因为找不到注册节点而拒绝，不能同步数据了
         if (!SetBestChainInner(txdb, pindexNew))
             return error("SetBestChain() : SetBestChainInner failed");
 
@@ -2225,7 +2229,7 @@ dbLuckChainWriteSqlBegin( 0 );   // 2016.10.14 add
     nBestChainTrust = pindexNew->nChainTrust;
     nTimeBestReceived = GetTime();
     nTransactionsUpdated++;
-    updateNewBestBlkNum(nBestHeight);  // 2017.04.12 add
+    //updateNewBestBlkNum(nBestHeight);  // 2017.04.12 add
     uint256 nBestBlockTrust = pindexBest->nHeight != 0 ? (pindexBest->nChainTrust - pindexBest->pprev->nChainTrust) : pindexBest->nChainTrust;
 
     printf("SetBestChain: new best=%s  height=%s  trust=%s  blocktrust=%"PRId64"  date=%s\n",
@@ -2337,6 +2341,8 @@ bool CBlock::GetCoinAge(uint64_t& nCoinAge) const
     return true;
 }
 
+extern void setEstimateHeight(uint64_t newHeight);
+extern bool WriteLastBlockHashAndHeight(uint256 hash, int64_t nHeight);
 bool CBlock::AddToBlockIndex(unsigned int nFile, unsigned int nBlockPos, const uint256& hashProof)
 {
     // Check for duplicate
@@ -2391,27 +2397,76 @@ bool CBlock::AddToBlockIndex(unsigned int nFile, unsigned int nBlockPos, const u
         setStakeSeen.insert(make_pair(pindexNew->prevoutStake, pindexNew->nStakeTime));
     pindexNew->phashBlock = &((*mi).first);
 
+if( GetArg("-crashtest1", 0) )
+{
+    printf("AddToBlockIndex() : begin sleep  500s for test 1 \n");
+    MilliSleep(500000);
+    printf("AddToBlockIndex() : sleep  500s for test end 1 \n");
+}
+
+WriteLastBlockHashAndHeight(hash, pindexNew->nHeight);      WriteAddBlockStep(4);
+    //txdb.WriteCurrentBlkNumber(pindexNew->nHeight);     txdb.WriteCurrentBlkHash(hash);   // 2018.01.13 add
+    if( fDebug ){ printf("AddToBlockIndex() : write current height=%d, current block hash = %s \n", (int)pindexNew->nHeight, hash.ToString().c_str()); }
+
     // Write to disk block index
     CTxDB txdb;
     if (!txdb.TxnBegin())
         return false;
 
+if( GetArg("-crashtest2", 0) )
+{
+    printf("AddToBlockIndex() : begin sleep  500s for test 2 \n");
+    MilliSleep(500000);
+    printf("AddToBlockIndex() : sleep  500s for test end 2 \n");
+}
+
+WriteAddBlockStep(5);
     txdb.WriteBlockIndex(CDiskBlockIndex(pindexNew));
     if (!txdb.TxnCommit())
         return false;
+
+WriteAddBlockStep(6);
+if( GetArg("-crashtest3", 0) )
+{
+    printf("AddToBlockIndex() : begin sleep  500s for test 3 \n");
+    MilliSleep(500000);
+    printf("AddToBlockIndex() : sleep  500s for test end 3 \n");
+}
 
     LOCK(cs_main);
 
     // New best
     if (pindexNew->nChainTrust > nBestChainTrust)
+    {
+        bLoadingGameInfoFromBlockchain = true;   // 2018.01.11 add
+        db_Transaction(dbQueueMining, 1);      db_Transaction(dbLuckChainWrite, 1);
+
+        bool bError = false;
         if (!SetBestChain(txdb, pindexNew))
         {
-            if( bReorganizeError )
+            /*if( bReorganizeError )
             {
                 bReorganizeError = false;      rollBackBlocksAndLuckChainDb(txdb);
-            }
-            return false;
+            }*/
+            bError = true;   //return false;
         }
+WriteAddBlockStep(7);
+        if( GetArg("-crashtest4", 0) )
+        {
+            printf("AddToBlockIndex() : begin sleep  500s for test 4 \n");
+            MilliSleep(500000);
+            printf("AddToBlockIndex() : sleep  500s for test end 4 \n");
+        }
+
+        // If error, rollback, else commit
+        if( bError ){ db_Transaction(dbQueueMining, 2);      db_Transaction(dbLuckChainWrite, 2);      bLoadingGameInfoFromBlockchain = false;     return false; }
+        else{
+            updateQueueNodesStatus(false);
+            db_Transaction(dbQueueMining, 0);      db_Transaction(dbLuckChainWrite, 0);      bLoadingGameInfoFromBlockchain = false;
+        }
+        NotifyQueueNodeMsgToUI(1, "");      updateNewBestBlkNum(nBestHeight);  // 2017.04.12 add
+    }
+    setEstimateHeight(pindexNew->nHeight);      WriteAddBlockStep(0);
 
     if (pindexNew == pindexBest)
     {
@@ -2503,7 +2558,6 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
     return true;
 }
 
-extern void setEstimateHeight(uint64_t newHeight);
 bool CBlock::AcceptBlock(CNode* pfrom, bool bPassBlock)
 {
     AssertLockHeld(cs_main);
@@ -2536,7 +2590,7 @@ if( fDebug ){ printf("AcceptBlock %d hi=%d : %d, PassMode %d\n", bPassBlock, (in
 	{
 		return DoS(100, error("AcceptBlock() : reject proof-of-work at height %d", nHeight));
 	}
-
+WriteAddBlockStep(1);
     int64_t blkTm = GetBlockTime();      bool bQPoS_Rules_Actived = Is_Queue_PoS_Rules_Acitved(nHeight);
     if( bQPoS_Rules_Actived )
 	{
@@ -2683,6 +2737,7 @@ if( bSqlBoostMode ){ dbLuckChainWriteSqlBegin( false ); }  // 2016.10.14 add
 	notifyReceiveNewBlockMsg( nHeight );  // 2016.10.19 add
 #endif  */
 
+WriteAddBlockStep(2);
     // Write block to history file
     if (!CheckDiskSpace(::GetSerializeSize(*this, SER_DISK, CLIENT_VERSION)))
         return error("AcceptBlock() : out of disk space");
@@ -2690,11 +2745,9 @@ if( bSqlBoostMode ){ dbLuckChainWriteSqlBegin( false ); }  // 2016.10.14 add
     unsigned int nBlockPos = 0;
     if (!WriteToDisk(nFile, nBlockPos, bPassBlock))
         return error("AcceptBlock() : WriteToDisk failed");
-
+WriteAddBlockStep(3);
     if (!AddToBlockIndex(nFile, nBlockPos, hashProof))
         return error("AcceptBlock() : AddToBlockIndex failed");
-
-    setEstimateHeight(nHeight);
 
     // Relay inventory, but don't relay old inventory during initial block download
     int nBlockEstimate = Checkpoints::GetTotalBlocksEstimate();

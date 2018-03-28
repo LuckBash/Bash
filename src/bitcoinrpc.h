@@ -254,4 +254,7 @@ extern json_spirit::Value unlockqueuenode(const json_spirit::Array& params, bool
 extern json_spirit::Value bindqnodeip(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value getqueuenodelist(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value getqnodelist(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value getgamelist(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value getgameplayinfo(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value getreferees(const json_spirit::Array& params, bool fHelp);
 #endif

@@ -199,6 +199,7 @@ extern int BitNetLotteryStartTestBlock_286000;
 extern int64_t BitNet_Lottery_Create_Mini_Amount;
 extern int iRecordPlayerInfo;
 extern bool bLuckChainRollbacking;
+extern bool bLoadingGameInfoFromBlockchain;
 extern const int64_t BitBet_Mini_Amount;
 extern int nLockQueueNodeCoinTime;
 extern const string strResetQueueNodeLostBlockMagic;
@@ -262,7 +263,8 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern bool isQueueNodeNickOrAddrExists(const string sNick, const string sCoinAddr);
     extern std::string getCurrentQueueMiner(bool bGetAddr=true);
 	extern bool GetCurrentQueueMinerInfo(QueueNodeListPack& pack);
-	extern bool updateQueueNodesStatus();
+	extern bool updateQueueNodesStatus(bool bAdd=true);
+    extern void NotifyQueueNodeMsgToUI(int opcode, const std::string sTx);
     extern bool updateQueueNodeInfo(const string tx, const string newTx, int payIdx, int64_t lastblktm);
 	extern int updateQueueNodeLostBlockCount(const string sMiner, int opc=1);
 	extern bool processQueueMiningTx(const CTransaction& tx, int64_t iTxHei, bool bConnect, int64_t blkTime);
@@ -309,6 +311,7 @@ extern int  GetCoinAddrInTxOutIndex(const string txID, string sAddr, uint64_t v_
 	extern unsigned int getBitBetTotalBetsAndMore(const string genBet, dbBitBetTotalAmountAndWinnerPack& pack);
 	extern unsigned int getWinnersReward(sqlite3 *dbOne, int betType, int enCashFlag, const string sReferee, uint64_t u6AllRewardCoins, uint64_t u6AllWinnerBetCoins, const std::vector<txOutPairPack > allWinners, std::vector<txOutPairPack >& newWinners, uint64_t& u6ToMinerFee);
 	extern uint64_t bettorCanEvaluateReferee(sqlite3 *dbOne, const string sReferee, const string sBettor);
+    extern void db_Transaction(sqlite3 *aDB, int opt);
 	extern void dbLuckChainWriteSqlBegin(int bStart);
 	extern bool disconnectBitBet(const CTransaction& tx);
     extern uint64_t getRefereeMaxCoins(sqlite3 *db, const string sReferee);
@@ -332,11 +335,36 @@ inline std::string inttostr(int n)
 }
 
 //const int64_t New_Rules_170526_Active_Height = 43200 + 306266;
+const int64_t New_Rules_170903_Active_Height = 760000;
+#define BitBet_Launch_MultiBet_MinAmount_100 100
+#define BitBet_Launch_MultiBet_Amount_100 100
+#define BitBet_Launch_EventBet_Amount_200 200
+#define BitBet_Launch_LottoBet_Amount_200 200
 const int Mini_Banker_Bet_Amount_170526 = 3000;
+
 //inline bool New_Rules_170526_Actived(int64_t nHeight) { return nHeight >= New_Rules_170526_Active_Height; }
 inline int getMini_Banker_Bet_Amount(int64_t nHeight) { 
-    if( nHeight >= Accept_Register_QPoS_Node_Height ){ return Mini_Banker_Bet_Amount_170526; }
+    if( nHeight >= New_Rules_170903_Active_Height ){ return 200; }
+    else if( nHeight >= Accept_Register_QPoS_Node_Height ){ return Mini_Banker_Bet_Amount_170526; }
 	else return Mini_Banker_Bet_Amount;
+}
+
+
+inline int getBitBet_Launch_MultiBet_MinAmount(int64_t nHeight) { 
+    if( nHeight >= New_Rules_170903_Active_Height ){ return BitBet_Launch_MultiBet_MinAmount_100; }
+	else return BitBet_Launch_MultiBet_MinAmount;
+}
+inline int getBitBet_Launch_MultiBet_Amount(int64_t nHeight) { 
+    if( nHeight >= New_Rules_170903_Active_Height ){ return BitBet_Launch_MultiBet_Amount_100; }
+	else return BitBet_Launch_MultiBet_Amount;
+}
+inline int getBitBet_Launch_EventBet_Amount(int64_t nHeight) { 
+    if( nHeight >= New_Rules_170903_Active_Height ){ return BitBet_Launch_EventBet_Amount_200; }
+	else return BitBet_Launch_EventBet_Amount;
+}
+inline int getBitBet_Launch_LottoBet_Amount(int64_t nHeight) { 
+    if( nHeight >= New_Rules_170903_Active_Height ){ return BitBet_Launch_LottoBet_Amount_200; }
+	else return BitBet_Launch_LottoBet_Amount;
 }
 
 #endif

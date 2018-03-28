@@ -53,6 +53,7 @@ int BitNetLotteryStartTestBlock_286000 = 123;
 int64_t BitNet_Lottery_Create_Mini_Amount = 10 * COIN;   //MIN_TXOUT_AMOUNT;
 int64_t MIN_Lottery_Create_Amount = 10 * COIN;   //MIN_TXOUT_AMOUNT;
 bool bBitBetSystemWallet = false, bLuckChainRollbacking=false, bSystemNodeWallet=false;
+bool bLoadingGameInfoFromBlockchain=false;   // 2018.01.11 add
 int iRecordPlayerInfo = 0;   // 2016.11.23 add
 CCriticalSection cs_bitbet;  // 2017.04.30 add
 CCriticalSection cs_queue_mining;  // 2017.05.30 add
@@ -77,6 +78,13 @@ boost::signals2::signal<void (uint64_t nBlockNum, uint64_t nTime)> NotifyReceive
 boost::signals2::signal<void (const BitBetPack& bbp)> NotifyReceiveNewBitBetMsg;
 boost::signals2::signal<void (int opc, const std::string nickName, const std::string coinAddr, const std::string sFee, const std::string maxBetCoin)> NotifyaddLuckChainRefereeMsg5Param;
 boost::signals2::signal<void (int opcode, const std::string sTx)> NotifyQueueNodeMsg;
+
+void NotifyQueueNodeMsgToUI(int opcode, const std::string sTx)
+{
+#ifdef QT_GUI
+    if( Is_Queue_PoS_Rules_Acitved(nBestHeight) ){ NotifyQueueNodeMsg(opcode, sTx); }
+#endif
+}
 
 std::string GetNewCoinAddress(const string strAccount)
 {
@@ -744,6 +752,16 @@ bool ReadOrWriteLuckChainBackupInfoToDB(bool bRead)
 	return rzt;
 }
 
+int64_t get_best_blknum()
+{
+   int64_t rzt=0;      string sql = "SELECT * from Settings limit 1;";
+   dbOneResultCallbackPack pack = {OneResultPack_U64_TYPE, 2, 0, 0, "best_blknum", ""};
+	getOneResultFromDb(dbLuckChainWrite, sql, pack);
+	if( pack.fDone > 0 ){ rzt = pack.u6Rzt; }
+   if( fDebug ){ printf("get_best_blknum :: fDone=[%d] u6Rzt=[%s] sql=[%s] \n", pack.fDone, u64tostr(pack.u6Rzt).c_str(), sql.c_str()); }
+   return rzt;
+}
+
 const string BitBetBurnAddressTest("mkBRk7uf2EfEBFweiij3Gf9NqEBqT7k8Tb");
 int openSqliteDb()
 {
@@ -767,6 +785,9 @@ int openSqliteDb()
 #else
    string sLuckChainDb = sDataDbDir + "/luckchain.db",  sAllAddressDb = sDataDbDir + "/alladdress.db", sNodesDb = sDataDbDir + "/nodes.db";
 #endif
+
+    string sNodesJournalFile = sNodesDb + "-journal",   sLuckChainJournalFile = sLuckChainDb + "-journal";   //nodes.db-journal
+    boost::filesystem::remove( sNodesJournalFile );    boost::filesystem::remove( sLuckChainJournalFile );
 
     if( ReadOrWriteLuckChainBackupInfoToDB(true) )   // 2017.04.12 add
 	{
@@ -914,10 +935,11 @@ int openSqliteDb()
    rc = sqlite3_open(pLuckChainDb, &dbLuckChainGui);   //sqlite3_exec(dbLuckChainGui, "PRAGMA synchronous = OFF; ", 0,0,0);
    sqlite3_busy_handler(dbLuckChainRead, dbBusyCallback, (void *)dbLuckChainRead);
    sqlite3_busy_handler(dbLuckChainRead2, dbBusyCallback, (void *)dbLuckChainRead2);
-   sqlite3_busy_handler(dbLuckChainWrite, dbBusyCallback, (void *)dbLuckChainWrite);
+   sqlite3_busy_handler(dbLuckChainWrite, dbBusyCallback, (void *)dbLuckChainWrite);   sqlite3_busy_handler(dbQueueMining, dbBusyCallback, (void *)dbQueueMining);
    sqlite3_busy_handler(dbLuckChainGui, dbBusyCallback, (void *)dbLuckChainGui);   sqlite3_busy_handler(dbLuckChainGu2, dbBusyCallback, (void *)dbLuckChainGu2);
 
-if( fDebug ){ printf("<--- openSqliteDb \n"); }
+   int64_t i6b = get_best_blknum();
+if( fDebug ){ printf("<--- openSqliteDb, nBestHeight=[%d :: %d] \n", (int)nBestHeight, (int)i6b); }
    return 0;
 }
 
@@ -1552,14 +1574,14 @@ bool isDuplicatesBossNums( const string sBetNum )  // 2016.10.22 add
 	bool rzt = false;
 	BitBetBossPack bp = {0, 0, 0, 0, 0, 0, 0};
 	int i = getBetBossNums(sBetNum, bp);
-	if( i > 5 )
+	if( i >= 5 )
 	{
 		if( (bp.b1 == bp.b2) || (bp.b1 == bp.b3) || (bp.b1 == bp.b4) || (bp.b1 == bp.b5) || (bp.b1 == bp.b6) ){ return true; }
 		if( (bp.b2 == bp.b1) || (bp.b2 == bp.b3) || (bp.b2 == bp.b4) || (bp.b2 == bp.b5) || (bp.b2 == bp.b6) ){ return true; }
 		if( (bp.b3 == bp.b1) || (bp.b3 == bp.b2) || (bp.b3 == bp.b4) || (bp.b3 == bp.b5) || (bp.b3 == bp.b6) ){ return true; }
 		if( (bp.b4 == bp.b1) || (bp.b4 == bp.b2) || (bp.b4 == bp.b3) || (bp.b4 == bp.b5) || (bp.b4 == bp.b6) ){ return true; }
 		if( (bp.b5 == bp.b1) || (bp.b5 == bp.b2) || (bp.b5 == bp.b3) || (bp.b5 == bp.b4) || (bp.b5 == bp.b6) ){ return true; }
-		if( (bp.b6 == bp.b1) || (bp.b6 == bp.b2) || (bp.b6 == bp.b3) || (bp.b6 == bp.b4) || (bp.b6 == bp.b5) ){ return true; }
+		if( i > 5 ){ if( (bp.b6 == bp.b1) || (bp.b6 == bp.b2) || (bp.b6 == bp.b3) || (bp.b6 == bp.b4) || (bp.b6 == bp.b5) ){ return true; } }
 	}
 	return rzt;
 }
@@ -1571,7 +1593,7 @@ string explainBetNums(int iBetLen, const string sBetNum, const string sBlkHash)
 	{
 		BitBetBossPack bbbp = {0, 0, 0, 0, 0, 0, 0};
 		int i = getBetBossNums(sBetNum, bbbp);
-		if( i > 5 )
+		if( i >= 5 )
 		{
 			const char* p = sBlkHash.c_str();
 			if( (bbbp.b1 >=0 ) && (bbbp.b1 < 64) ){ rzt = rzt + p[bbbp.b1]; }
@@ -1579,7 +1601,7 @@ string explainBetNums(int iBetLen, const string sBetNum, const string sBlkHash)
 			if( (bbbp.b3 >=0 ) && (bbbp.b3 < 64) ){ rzt = rzt + p[bbbp.b3]; }
 			if( (bbbp.b4 >=0 ) && (bbbp.b4 < 64) ){ rzt = rzt + p[bbbp.b4]; }
 			if( (bbbp.b5 >=0 ) && (bbbp.b5 < 64) ){ rzt = rzt + p[bbbp.b5]; }
-			if( (bbbp.b6 >=0 ) && (bbbp.b6 < 64) ){ rzt = rzt + p[bbbp.b6]; }
+			if( i > 5 ){ if( (bbbp.b6 >=0 ) && (bbbp.b6 < 64) ){ rzt = rzt + p[bbbp.b6]; } }
 			if( rzt.length() > 0 ) rzt = "0x" + rzt;
 		}
 		if( fDebug ){ printf("explainBetNums : sBetNum=[%s], getBetBossNums() return [%d], rzt = [%s] \n", sBetNum.c_str(), i, rzt.c_str()); }
@@ -1742,7 +1764,7 @@ if( fDebug ){ printf("synAllBitBetCallback :: no winner, set tx=[%s] done=1 \n",
 							else if( sWinNum == sBetNum ){ sIsWiner = "1"; }
 						  }
 						  if( fDebug ){ printf("synAllBitBetCallback:: sBetNum [%s] sWinNum[%s], isWin [%s] \n", sBetNum.c_str(), sWinNum.c_str(), sIsWiner.c_str()); }
-					  }else if( iBetType == 3 )   // Lucky Boss,  Biggest
+					  }else if( (iBetType == 3)  || (iBetType == 6) )   // Lucky Boss,  Biggest, Lucky Ten
 					  {
 							string sExpBetNum = explainBetNums(iBetLen, sBetNum, sCurrTgBlkHash);
 							//uint64_t u6Num = strToInt64(sExpBetNum.c_str());   uint32_t x = u6Num;
@@ -1998,14 +2020,22 @@ struct syncLuckyBossPack
    std::vector<std::string> vSqls;
 };
 
+void db_Transaction(sqlite3 *aDB, int opt)
+{
+	if( opt <= 0 ){ sqlite3_exec( aDB, "COMMIT", 0, 0, 0); }             // 0 = COMMIT
+	else if( opt == 2 ){ sqlite3_exec( aDB, "ROLLBACK", 0, 0, 0); }  // 2 = ROLLBACK
+	else { sqlite3_exec( aDB, "BEGIN", 0, 0, 0); }                                 // 1 = BEGIN
+}
+
 void dbLuckChainWriteSqlBegin(int bStart)
 {
-	if( bStart  > 0 )
+	//db_Transaction(dbLuckChainWrite, bStart);
+	/*if( bStart  > 0 )
 	{
 		if( bStart == 2 ){ sqlite3_exec( dbLuckChainWrite, "ROLLBACK", 0, 0, 0); }
 		else{  sqlite3_exec( dbLuckChainWrite, "BEGIN", 0, 0, 0);  }
 	}
-	else{ sqlite3_exec( dbLuckChainWrite, "COMMIT", 0, 0, 0); }
+	else{ sqlite3_exec( dbLuckChainWrite, "COMMIT", 0, 0, 0); }*/
 }
 bool syncAllBitBets(uint64_t nHeight, bool vForce)
 {
@@ -2542,7 +2572,7 @@ bool isValidBitBetGenesisTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack 
 	}	// block hash len = 64
 	//if( fDebug ){ printf("isValidLotteryGenesisTx: iGuessType = [%u], sLotteryAddr = [%s],  sMakerAddr = [%s]\n", iGuessType, sLotteryAddr.c_str(), sMakerAddr.c_str()); }
 
-	if( bbp.betType == 3 )   // Lucky Boss new rules,  2016.10.22 add
+	if( (bbp.betType == 3) || (bbp.betType == 6) )   // Lucky Boss new rules,  2016.10.22 add
 	{
 		if( isDuplicatesBossNums( bbp.betNum ) )
 		{
@@ -2572,9 +2602,10 @@ bool isValidBitBetGenesisTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack 
 	if( bbp.u6MiniBetAmount < BitBet_Mini_Amount ){ return rzt; }
 	if( bbp.betType > 0 )  // 2016.09.30 add,  game type not lucky 16
 	{
-		if( bbp.u6BetAmount  < BitBet_Launch_MultiBet_MinAmount )
+		uint64_t u6a = getBitBet_Launch_MultiBet_MinAmount(iTxHei);  // 2017.09.03 add
+		if( bbp.u6BetAmount  < u6a )
 		{
-			if( fDebug ) printf("isValidBitBetGenesisTx: Amount [%s] < BitBet_Launch_MultiBet_MinAmount [%u] :(\n", u64tostr(bbp.u6BetAmount).c_str(), BitBet_Launch_MultiBet_MinAmount);
+			if( fDebug ) printf("isValidBitBetGenesisTx: Amount [%s] < BitBet_Launch_MultiBet_MinAmount [%u] :(\n", u64tostr(bbp.u6BetAmount).c_str(), (int)u6a);
 			return rzt;
 		}
 	}
@@ -2750,7 +2781,7 @@ bool isValidBitBetBetTx(const CTransaction& tx, uint64_t iTxHei, BitBetPack &bbp
 	CBitcoinAddress aBettor(bbp.bettor);
     if( !aBettor.IsValid() ){ if( fDebug ){ printf("isValidBitBetBetTx: bettor [%s] unvalid \n", bbp.bettor.c_str());  return rzt;  } }
 
-	if( bbp.betType == 3 )   // Lucky Boss new rules,  2016.10.22 add
+	if( (bbp.betType == 3) || (bbp.betType == 6) )   // Lucky Boss new rules,  2016.10.22 add
 	{
 		if( isDuplicatesBossNums( bbp.betNum ) )
 		{
@@ -4201,7 +4232,7 @@ bool BindingQueueNodeIPAddress(const CTransaction& tx)
 	return rzt;
 }
 
-bool updateQueueNodesStatus()
+bool updateQueueNodesStatus(bool bAdd)
 {
     LOCK(cs_queue_mining);  // 2017.05.30
     string sql = "update Nodes set confirm=(confirm+1) where confirm<10;";
@@ -4209,12 +4240,13 @@ bool updateQueueNodesStatus()
 	if( fDebug ){ printf("updateQueueNodesStatus() : [%d] [%s] \n", rc, sql.c_str()); }
 
     //-- Auto quit  expired nodes,  unlockblk
-    int64_t i6 = nBestHeight + 1;
+    int64_t i6 = nBestHeight;  // + 1;
+    if( bAdd ){ i6++; }  // 2018.01.14 add
     sql = "DELETE FROM Nodes where unlockblk<" + i64tostr(i6) + ";";
 	rc = sqlite3_exec(dbQueueMining, sql.c_str(), NULL, 0, NULL);
 	if( fDebug ){ printf("updateQueueNodesStatus() : [%d] [%s] \n", rc, sql.c_str()); }
 
-	NotifyQueueNodeMsg(1, "");
+	//NotifyQueueNodeMsgToUI(1, "");
 	return (rc == SQLITE_OK);
 }
 
@@ -4233,7 +4265,7 @@ bool processQueueMiningTx(const CTransaction& tx, int64_t iTxHei, bool bConnect,
 				if( bNeedIP && (strIP.length() < Mini_IP_Length) ){ bCanRegQNode=false; }
 			    if( bCanRegQNode && bAcceptRegNode && !isQueueNodeNickOrAddrExists(sNick, sCoinAddr) )
 				{
-					if( insertQueueNode(iTxHei, iLockDays, sNick, sCoinAddr, sTx, payIdx, tx.nTime, strIP) ){ } //NotifyQueueNodeMsg(2, sTx); }
+					if( insertQueueNode(iTxHei, iLockDays, sNick, sCoinAddr, sTx, payIdx, tx.nTime, strIP) ){ } //NotifyQueueNodeMsgToUI(2, sTx); }
 				}
 			}
 			else if( bQPoS_Rules_Actived ){ if( !resetQueueNodeLostBlkCount(tx, iTxHei, blkTime) ){ BindingQueueNodeIPAddress(tx); } }
@@ -4248,7 +4280,7 @@ bool processQueueMiningTx(const CTransaction& tx, int64_t iTxHei, bool bConnect,
 					{
 						string sTxPrev = txPrev.GetHash().ToString();
 						if( fDebug ){ printf( "processQueueMiningTx: tx.IsCoinStake=true, txPrev = [%s], \n", sTxPrev.c_str() ); }
-						if( updateQueueNodeInfo(sTxPrev, sTx, 1, blkTime) ){ NotifyQueueNodeMsg(3, sTxPrev); }  //if( updateQueueNodeInfo(sTxPrev, sTx, txin.prevout.n, blkTime) ){ NotifyQueueNodeMsg(3, sTxPrev); }
+						if( updateQueueNodeInfo(sTxPrev, sTx, 1, blkTime) ){ NotifyQueueNodeMsgToUI(3, sTxPrev); }  //if( updateQueueNodeInfo(sTxPrev, sTx, txin.prevout.n, blkTime) ){ NotifyQueueNodeMsgToUI(3, sTxPrev); }
 					}else{ printf( "processQueueMiningTx: IsCoinStake, GetTransaction() failed :( \n"); }
 				}else{
 				BOOST_FOREACH(const CTxIn& txin, tx.vin)
@@ -4260,7 +4292,7 @@ bool processQueueMiningTx(const CTransaction& tx, int64_t iTxHei, bool bConnect,
 					{
 						string sTxPrev = txPrev.GetHash().ToString();
 						if( fDebug ){ printf( "processQueueMiningTx: txPrev = [%s], \n", sTxPrev.c_str() ); }
-						if( deleteQueueNode(sTxPrev, txin.prevout.n) ){ NotifyQueueNodeMsg(0, sTxPrev); }
+						if( deleteQueueNode(sTxPrev, txin.prevout.n) ){ NotifyQueueNodeMsgToUI(0, sTxPrev); }
 					}else{ printf( "processQueueMiningTx: GetTransaction() failed :( \n"); }
 				}}
 			}
@@ -4592,4 +4624,174 @@ int64_t totalMinedCoins(int64_t i6LockDays, int64_t iGotBlks)
     else if( i6LockDays >= 10 ){ iCoins = 20 * iGotBlks; }  // Lock 10 day, reward 25 BASH
     else{ iCoins = 10 * iGotBlks; }  // Lock 1~9 days, reward 20 BASH
 	return iCoins;
+}
+
+
+
+
+string ObjToString(const Object& obj)
+{
+    string rzt = "";      Value result(obj);
+    if (result.type() == json_spirit::null_type){}
+    else if (result.type() == json_spirit::str_type){ rzt = result.get_str(); }
+    else{ rzt = write_string(result, true); }
+    return rzt;
+}
+class CGameObjHash
+{
+public:
+    unsigned int nVersion;
+    std::string gameList;
+
+    CGameObjHash()
+    {
+        SetNull();
+    }
+
+    IMPLEMENT_SERIALIZE
+    (
+        READWRITE(this->nVersion);
+        nVersion = this->nVersion;
+        READWRITE(gameList);
+    )
+
+    void SetNull()
+    {
+        nVersion = 1;      gameList="";
+    }
+
+    CGameObjHash(const Object& obj)
+    {
+        SetNull();
+        gameList = ObjToString(obj);
+        //gameList = v.get_str(); //ObjToBuffer(obj, gameList);   //this->gameList.push_back( Pair("gml", obj) );
+        //if( fDebug ){ printf("CGameObjHash:: gameList=[%s] \n", gameList.c_str()); }
+    }
+
+    uint256 GetHash() const
+    {
+        return SerializeHash(*this);
+    }
+};
+
+struct GameListPack{
+    int opc;
+    Object obj;
+	uint64_t curBlkNum, recordCount;
+};
+
+static int loadGamesCallback(void *data, int argc, char **argv, char **azColName)
+{
+   if( (data != NULL) && (argc > 15) )
+   {
+       GameListPack* lst = (GameListPack*)data;
+       Object obj;
+       //if( fDebug ){ printf("loadGamesCallback:: title=[%s] \n", argv[ AllBets_bet_title_idx ]); }
+       if( lst->opc == 0 ){
+            string st = strprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s", argv[ AllBets_nTime_idx ], argv[ AllBets_bet_type_idx ], argv[ AllBets_bet_len_idx ], argv[ AllBet_one_addr_once_idx ], argv[ AllBet_rounds_idx ], argv[ AllBets_bet_count_idx ], argv[ AllBets_total_bet_amount_idx ], argv[ AllBets_min_amount_idx ], argv[ AllBets_tblock_idx ], argv[ AllBets_referee_idx ], argv[ AllBets_bet_title_idx ]);
+            lst->obj.push_back( Pair(argv[ AllBets_tx_idx ], st ) );
+       }else{
+       obj.push_back( Pair("id", argv[ AllBets_id_idx ] ) );
+       obj.push_back( Pair("opcode", argv[ AllBets_opcode_idx ] ) );
+       obj.push_back( Pair("type", argv[ AllBets_bet_type_idx ] ) );
+       obj.push_back( Pair("bet_amount", argv[ AllBets_bet_amount_idx ] ) );
+       obj.push_back( Pair("min_amount", argv[ AllBets_min_amount_idx ] ) );
+       obj.push_back( Pair("start_block", argv[ AllBets_sblock_idx ] ) );
+       obj.push_back( Pair("target_block", argv[ AllBets_tblock_idx ] ) );
+       obj.push_back( Pair("block_space", argv[ AllBets_blockspace_idx ] ) );
+       obj.push_back( Pair("bet_len", argv[ AllBets_bet_len_idx ] ) );
+       obj.push_back( Pair("bet_num", argv[ AllBets_bet_num_idx ] ) );
+       obj.push_back( Pair("bet_num2", argv[ AllBets_bet_num2_idx ] ) );
+       obj.push_back( Pair("gen_bet", argv[ AllBets_gen_bet_idx ] ) );
+       obj.push_back( Pair("tx", argv[ AllBets_tx_idx ] ) );
+       obj.push_back( Pair("title", argv[ AllBets_bet_title_idx ] ) );
+       obj.push_back( Pair("referee", argv[ AllBets_referee_idx ] ) );
+       obj.push_back( Pair("bettor", argv[ AllBets_bettor_idx ] ) );
+       obj.push_back( Pair("confirmed", argv[ AllBets_confirmed_idx ] ) );
+       obj.push_back( Pair("maxbetcoins", argv[ AllBets_maxbetcoins_idx ] ) );
+       obj.push_back( Pair("time", argv[ AllBets_nTime_idx ] ) );
+       obj.push_back( Pair("bet_count", argv[ AllBets_bet_count_idx ] ) );
+       obj.push_back( Pair("total_amount", argv[ AllBets_total_bet_amount_idx ] ) );
+       obj.push_back( Pair("refereenick", argv[ AllBet_refereeNick_idx ] ) );
+       obj.push_back( Pair("rounds", argv[ AllBet_rounds_idx ] ) );
+       obj.push_back( Pair("max_bet_count", argv[ AllBet_max_bet_count_idx ] ) );
+       obj.push_back( Pair("one_addr_once", argv[ AllBet_one_addr_once_idx ] ) );
+       obj.push_back( Pair("one_addr_max_bet_amount", argv[ AllBet_oneAddrMaxBetAmount_idx ] ) );
+       obj.push_back( Pair("unique_number", argv[ AllBet_uniqueNumber_idx ] ) );
+       lst->obj.push_back( Pair(u64tostr(lst->recordCount), obj) );
+       }
+       lst->recordCount++;
+   }
+   return 0;
+}
+
+//extern int writeBufToFile(char* pBuf, int bufLen, string fName);
+bool getAllGamesToJSON(int funcIdx, const string& sql, const string& secName, Object& out)
+{
+    bool rzt=false;   char* zErrMsg = 0;
+    GameListPack lst;   lst.opc=funcIdx;   lst.curBlkNum = nBestHeight;   lst.recordCount=0; //={obj, nBestHeight, 0};
+    LOCK(cs_bitbet);
+    int rc = sqlite3_exec(dbLuckChainRead, sql.c_str(), loadGamesCallback, (void*)&lst, &zErrMsg);
+    rzt = (rc == SQLITE_OK);
+    if( fDebug ){ printf("getAllGamesToJSON:: funcIdx={%d], Record Count = [%d], [%s] \n [%d] [%s]\n", funcIdx, (int)lst.recordCount, sql.c_str(), rc, zErrMsg); }
+    if( zErrMsg ){ sqlite3_free(zErrMsg); }
+    if( rzt ){
+        out.push_back( Pair("Total", lst.recordCount) );
+        out.push_back( Pair(secName, lst.obj) );
+        CGameObjHash goh(lst.obj);   out.push_back( Pair("Hash", goh.GetHash().ToString()) );
+
+        //string s = ObjToString(out);
+        //writeBufToFile((char*)s.c_str(), s.length(), "gamelist.txt");
+    }
+    return rzt;
+}
+
+bool getAllGamesToJSON(int funcIdx, int opcode, int onePageListItems, int pageNum, const string& sGenBet, const string& secName, Object& out)
+{
+    int64_t i6Tblk = nBestHeight + 2;
+    string sql = "select * from AllBets where ";
+    if( sGenBet.length() > 60 ){ sql = sql + "gen_bet='" + sGenBet + "'"; }
+    else{
+        sql = sql + "opcode=" + inttostr(opcode) + " and bet_type>0 and done=0 and tblock>"  + i64tostr(i6Tblk) + " ORDER BY id DESC";
+    }
+    if( funcIdx > 0 ){ sql = sql + " LIMIT " + inttostr(onePageListItems) + " OFFSET " + inttostr(pageNum); }
+    sql = sql + ";";
+    return getAllGamesToJSON(funcIdx, sql, secName, out);
+}
+
+
+static int loadRefereesCallback(void *data, int argc, char **argv, char **azColName)
+{
+   if( (data != NULL) && (argc > 15) )
+   {
+       GameListPack* lst = (GameListPack*)data;
+       //Object obj;
+       //if( lst->opc == 0 ){
+		   // id=0 | nickName=1 | coinAddress=2 | local=3 | fee=4 | maxcoins=5 | remark=6 | good=7 | bad=8 | decideCount=11 | takeFees=12 | nTime=17
+            string st = strprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|", argv[ 0 ], argv[ 1 ], argv[ 3 ], argv[ 4 ], argv[ 5 ], argv[ 6 ], argv[ 7 ], argv[ 8 ], argv[ 11 ], argv[ 12 ], argv[ 17 ]);
+            lst->obj.push_back( Pair(argv[ 2 ], st ) );
+       //}else{
+           //lst->obj.push_back( Pair(u64tostr(lst->recordCount), obj) );
+       //}
+       lst->recordCount++;
+   }
+   return 0;
+}
+
+bool getAllRefereesToJSON(Object& out)
+{
+    string sql = "select * from Referees where valid>0;";
+    bool rzt=false;   char* zErrMsg = 0;
+    GameListPack lst;   lst.opc=0;   lst.curBlkNum = nBestHeight;   lst.recordCount=0; //={obj, nBestHeight, 0};
+    LOCK(cs_bitbet);
+    int rc = sqlite3_exec(dbLuckChainRead, sql.c_str(), loadRefereesCallback, (void*)&lst, &zErrMsg);
+    rzt = (rc == SQLITE_OK);
+    if( fDebug ){ printf("getAllRefereesToJSON:: Record Count = [%d], [%s] \n [%d] [%s]\n", (int)lst.recordCount, sql.c_str(), rc, zErrMsg); }
+    if( zErrMsg ){ sqlite3_free(zErrMsg); }
+    if( rzt ){
+        out.push_back( Pair("Total", lst.recordCount) );
+        out.push_back( Pair("Items", lst.obj) );
+        CGameObjHash goh(lst.obj);   out.push_back( Pair("Hash", goh.GetHash().ToString()) );
+    }
+    return rzt;
 }

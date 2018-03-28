@@ -1031,9 +1031,10 @@ boost::filesystem::path GetDefaultDataDir()
     fs::path full_path = GetDefaultDataDir_Core();
 #ifdef WIN32
 	fs::path pcu_blockChain = fs::current_path() / "BlockChain";
-    bool bcu = fs::exists(pcu_blockChain / "blk0001.dat"), bFullExists = fs::exists( full_path );
+    bool bFullExists = fs::exists(full_path / "blk0001.dat"), bcu = fs::exists( pcu_blockChain ), bcb = fs::exists(pcu_blockChain / "blk0001.dat");
     fs::create_directory(full_path);
-    if( bcu || (!bFullExists) )
+    if( bcb ){ return pcu_blockChain; }
+    if( bcu && (!bFullExists) )
     {
         return pcu_blockChain;
     }

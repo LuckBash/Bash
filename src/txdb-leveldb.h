@@ -200,6 +200,47 @@ public:
         return Write(std::string("lkcbaknum"), nBlkNum);
     }
 
+
+    bool ReadCurrentBlkNumber(int64_t& nBlkNum)
+    {
+        nBlkNum = 0;
+        return Read(std::string("currentblknum"), nBlkNum);
+    }
+    bool WriteCurrentBlkNumber(int64_t nBlkNum)
+    {
+        return Write(std::string("currentblknum"), nBlkNum);
+    }
+
+    bool ReadCurrentBlkHash(uint256& blkHash)
+    {
+        blkHash = 0;
+        return Read(std::string("currentblkhash"), blkHash);
+    }
+    bool WriteCurrentBlkHash(uint256 blkHash)
+    {
+        return Write(std::string("currentblkhash"), blkHash);
+    }
+
+    bool ReadCrashFlag(int& nCrash)
+    {
+        nCrash = 0;
+        return Read(std::string("becrash"), nCrash);
+    }
+    bool WriteCrashFlag(int nCrash)
+    {
+        return Write(std::string("becrash"), nCrash);
+    }
+
+    bool ReadAddBlockStep(int& nStep)
+    {
+        nStep = 0;
+        return Read(std::string("addblockstep"), nStep);
+    }
+    bool WriteAddBlockStep(int nStep)
+    {
+        return Write(std::string("addblockstep"), nStep);
+    }
+
     bool ReadTxIndex(uint256 hash, CTxIndex& txindex);
     bool UpdateTxIndex(uint256 hash, const CTxIndex& txindex);
     bool AddTxIndex(const CTransaction& tx, const CDiskTxPos& pos, int nHeight);

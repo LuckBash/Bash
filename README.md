@@ -10,6 +10,7 @@ And LuckChain is a PoS-based cryptocurrency.<br />
 [Official website: http://luckchain.org](http://luckchain.org)<br />
 [Twitter: https://twitter.com/Luck_Chain](https://twitter.com/Luck_Chain)<br />
 [Facebook: https://www.facebook.com/groups/1748797598708254/](https://www.facebook.com/groups/1748797598708254/)<br />
+[Telegram: https://t.me/luckchain](https://t.me/luckchain)<br />
 ![alt tag](https://s10.postimg.org/6ouhzsmfd/Luck_Chain-_QPo_S-_V624.png)<br />
 
 

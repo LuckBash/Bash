@@ -42,7 +42,7 @@ void ThreadRPCServer3(void* parg);
 
 static inline unsigned short GetDefaultRPCPort()
 {
-    return GetBoolArg("-testnet", false) ? 20169 : 20167;
+    return GetBoolArg("-testnet", false) ? 20167 : 20169;
 }
 
 Object JSONRPCError(int code, const string& message)
@@ -332,6 +332,9 @@ static const CRPCCommand vRPCCommands[] =
     { "bindqnodeip",		    &bindqnodeip,    	 true,      false },
     { "getqueuenodelist",		    &getqueuenodelist,    	 true,      false },
     { "getqnodelist",		    &getqueuenodelist,    	 true,      false },
+    { "getgamelist",		    &getgamelist,    	 true,      false },
+    { "getgameplayinfo",		    &getgameplayinfo,    	 true,      false },
+    { "getreferees",		    &getreferees,    	 true,      false },
 };
 
 CRPCTable::CRPCTable()
@@ -1295,6 +1298,17 @@ Array RPCConvertValues(const std::string &strMethod, const std::vector<std::stri
     if (strMethod == "rollbackto"             && n > 0) ConvertTo<boost::int64_t>(params[0]);
     if (strMethod == "rollbackblocks"         && n > 0) ConvertTo<boost::int64_t>(params[0]);
     if (strMethod == "regqueuenode"             && n > 2) ConvertTo<boost::int64_t>(params[2]);
+    if ( strMethod == "getgamelist" )
+	{ 
+		if( n > 0 ){ ConvertTo<int64_t>(params[0]); }
+		if( n > 1 ){ ConvertTo<int64_t>(params[1]); }
+		if( n > 2 ){ ConvertTo<int64_t>(params[2]); }
+	}
+    if ( strMethod == "getgameplayinfo" )
+	{ 
+		if( n > 1 ){ ConvertTo<int64_t>(params[1]); }
+		if( n > 2 ){ ConvertTo<int64_t>(params[2]); }
+	}
     return params;
 }
 

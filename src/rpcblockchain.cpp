@@ -158,6 +158,8 @@ Object blockToJSON(const CBlock& block, const CBlockIndex* blockindex, bool fPri
     if (block.IsProofOfStake())
         result.push_back(Pair("signature", HexStr(block.vchBlockSig.begin(), block.vchBlockSig.end())));
 
+    if( GetArg("-addblockdatatojson", 0) ){ result.push_back(Pair("blockdata", block.blockData)); }   // 2018.01.21 add
+
     return result;
 }
 

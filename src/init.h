@@ -25,10 +25,17 @@ extern const string sBitChain_ident;
 extern const string sLuckChain_ident;
 extern const string sBitChain_key;
 
+extern uint256 uLastBlockHash;
+extern int64_t i6LastBlockHeight;
+extern int iLastWalletCrashFlag;
+extern int iLastAddBlockStep;
+
 extern CWallet* pwalletMain;
 void StartShutdown();
 void Shutdown(void* parg);
 bool AppInit2();
 std::string HelpMessage();
+bool ReadAddBlockStep(int& iStep);
+bool WriteAddBlockStep(int iStep);
 
 #endif

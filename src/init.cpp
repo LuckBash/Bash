@@ -84,10 +84,40 @@ extern void initBitChain();
 #endif
 extern void initDefaultStakeKey();
 
+uint256 uLastBlockHash=0;
+int64_t i6LastBlockHeight=0;
+int iLastWalletCrashFlag=0, iLastAddBlockStep=0;
+extern bool isGoodBlockGameTxs(CBlock& block, CBlockIndex* pindexNew);
+
 //////////////////////////////////////////////////////////////////////////////
 //
 // Shutdown
 //
+
+bool WriteLastBlockHashAndHeight(uint256 hash, int64_t nHeight)
+{
+    CTxDB txdb;
+	bool rzt = txdb.WriteCurrentBlkHash(hash);   bool r2 = txdb.WriteCurrentBlkNumber(nHeight);     
+    return (rzt && r2);
+}
+
+bool ReadAddBlockStep(int& iStep)
+{
+    CTxDB txdb("r");
+    return txdb.ReadAddBlockStep(iStep);
+}
+
+bool WriteAddBlockStep(int iStep)
+{
+    CTxDB txdb;
+    return txdb.WriteAddBlockStep(iStep);
+}
+
+bool SetCrashFlag(int iFlag)
+{
+    CTxDB txdb;
+    return txdb.WriteCrashFlag(iFlag);
+}
 
 void ExitTimeout(void* parg)
 {
@@ -137,7 +167,7 @@ void Shutdown(void* parg)
         boost::filesystem::remove(GetPidFile());
         UnregisterWallet(pwalletMain);
         delete pwalletMain;
-        closeLuckChainDB();
+        closeLuckChainDB();      WriteAddBlockStep(0);      SetCrashFlag(0);
         NewThread(ExitTimeout, NULL);
         MilliSleep(50);
         printf("LuckChain exited\n\n");
@@ -1322,6 +1352,51 @@ printf("bnQueueMiningProofOfStakeLimit = %s\n", bnQueueMiningProofOfStakeLimit.g
 #endif
 
    openSqliteDb();      i6NodeStartMicrosTime = GetTimeMicros();
+
+    {  // 2018.01.13 add
+        CTxDB txdb;
+
+		//WriteAddBlockStep(6);   // for test
+        //txdb.WriteCrashFlag(1);   // for test
+		
+        txdb.ReadCurrentBlkNumber(i6LastBlockHeight);     txdb.ReadCurrentBlkHash(uLastBlockHash);   txdb.ReadCrashFlag(iLastWalletCrashFlag);  // 2018.01.13 add
+		txdb.WriteCrashFlag(1);     int iCr2=0;      txdb.ReadCrashFlag(iCr2);      txdb.ReadAddBlockStep(iLastAddBlockStep);
+        printf("init() : last add block step=[%d], last crash flag=[%d : %d]=new flag, last add block height=[%d : %d]=nBestHeight, last block hash = [%s] \n", iLastAddBlockStep, iLastWalletCrashFlag, iCr2, (int)i6LastBlockHeight, (int)nBestHeight, uLastBlockHash.ToString().c_str());
+		if( (iLastWalletCrashFlag > 0) && (iLastAddBlockStep > 5) && (uLastBlockHash > 0) )
+		{
+            printf("init() : detected wallet crash :( \n");
+            if( mapBlockIndex.count(uLastBlockHash) > 0 )
+            {
+                CBlock block;
+                CBlockIndex* pblockindex = mapBlockIndex[uLastBlockHash];
+                printf("init() : detected wallet crash, last block height=[%d : %d]=nBestHeight, hash=[%s] \n", (int)pblockindex->nHeight, (int)nBestHeight, uLastBlockHash.ToString().c_str());
+                if( pblockindex->nHeight >= nBestHeight )
+                {
+                    if( block.ReadFromDisk(pblockindex, true) )
+                    {
+                        printf("init() : loaded block,  hashPrevBlock=[%s] : [%s]=hashBestChain \n", block.hashPrevBlock.ToString().c_str(), hashBestChain.ToString().c_str());
+					    if( iLastAddBlockStep == 6 )
+						{
+							if( !block.SetBestChain(txdb, pblockindex) ){ printf("init() : SetBestChain() failed :( \n"); }
+						}else if( iLastAddBlockStep == 7 ){
+                            nBestHeight--;
+                            BOOST_FOREACH(CTransaction& tx, block.vtx)
+                            {
+                                processQueueMiningTx(tx, pblockindex->nHeight, true, pblockindex->GetBlockTime());
+                            }
+                            nBestHeight++;
+                            if( !isGoodBlockGameTxs(block, pblockindex) ){ printf("init() : isGoodBlockGameTxs() failed :( \n"); }
+						}
+                        //else{ pwallet->UpdatedTransaction(hashTx); }
+                        /*if (!block.ConnectBlock(txdb, pblockindex))
+                        {
+                            return error("init() : ConnectBlock %s failed", pblockindex->GetBlockHash().ToString().substr(0,20).c_str());
+                        }*/
+                    }else{ printf("init() : ReadFromDisk() failed :( \n"); }
+                }
+            }else{ printf("init() : Last Block Hash not in mapBlockIndex :( \n"); }
+		}
+    }
 
     if (!NewThread(StartNode, NULL))
         InitError(_("Error: could not start node"));

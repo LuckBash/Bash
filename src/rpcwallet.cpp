@@ -5143,3 +5143,50 @@ Value bindqnodeip(const Array& params, bool fHelp)
 
     return wtx.GetHash().GetHex();
 }
+
+extern bool getAllGamesToJSON(int funcIdx, int opcode, int onePageListItems, int pageNum, const string& sGenBet, const string& secName, Object& out);
+Value getgamelist(const Array& params, bool fHelp)
+{
+    /*if (fHelp || params.size() < 2)
+	{
+		throw runtime_error("getgamelist <page number> <one page games> <opcode> <only list active games>\n");
+	}*/
+	bool bOnlyActive=false;   int opc=1, onePageListItems=GetArg("-onepagegames", 30), pageNum=0;
+	Object entry;   string sTx="";
+	if( params.size() > 0 ){ pageNum = params[0].get_int(); }
+	if( params.size() > 1 ){ onePageListItems = params[1].get_int(); }
+	if( params.size() > 2 ){ opc = params[2].get_int(); }
+	if( params.size() > 3 ){ sTx = params[3].get_str(); }
+	//if( params.size() > 3 ){ bOnlyActive = (sAddr == "1") || (sAddr == "active"); }
+    getAllGamesToJSON(0, opc, onePageListItems, pageNum, sTx, "Items", entry);
+    return entry;	
+}
+
+Value getgameplayinfo(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() < 1)
+	{
+		throw runtime_error("getgameplayinfo <game tx id> <page number> <one page players> \n");
+	}
+	int opc=2, onePageListItems=20, pageNum=0;
+	Object entry;   string sGenBet=params[0].get_str();
+    if( sGenBet.length() == 64 )
+    {
+	    if( params.size() > 1 ){ pageNum = params[1].get_int(); }
+    	if( params.size() > 2 ){ onePageListItems = params[2].get_int(); }
+        getAllGamesToJSON(1, opc, onePageListItems, pageNum, sGenBet, "Items", entry);
+    }
+    return entry;	
+}
+
+extern bool getAllRefereesToJSON(Object& out);
+Value getreferees(const Array& params, bool fHelp)
+{
+    /*if (fHelp || params.size() < 2)
+	{
+		throw runtime_error("getgamelist <page number> <one page games> <opcode> <only list active games>\n");
+	}*/
+	Object entry;
+    getAllRefereesToJSON(entry);
+    return entry;	
+}
